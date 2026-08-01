@@ -42,7 +42,11 @@ read_key(){
   printf '%s' "$key"
 }
 
-future_time(){ local epoch; epoch="$(date -d "$1" +%s 2>/dev/null)" || fail "$2 inválido."; ((epoch > $(date -u +%s))) || fail "$2 expiró."; }
+future_time(){
+  local value="$1" label="$2" epoch
+  epoch="$(date -d "$value" +%s 2>/dev/null)" || fail "$label contiene una fecha inválida."
+  ((epoch > $(date -u +%s))) || fail "$label expiró."
+}
 
 canonical(){
   printf 'status=%s\nexpires_at=%s\ndownload_expires_at=%s\nnonce=%s\nsubject=%s\nversion=%s\ndownload_url=%s\npackage_sha256=%s\nentrypoint=%s\n' "$@"
@@ -53,9 +57,13 @@ main(){
   local status expires_at download_expires_at response_nonce subject version download_url package_sha256 entrypoint signature activation_token lease_expires_at
   local public_key payload signature_file archive extract_root entrypoint_file package_root
   local -a matches=()
+
   case "$action" in
     install|upgrade) ;;
-    status) [[ -x /usr/local/bin/hextunnel ]] && exec /usr/local/bin/hextunnel license status; fail "Hex Tunnel no está instalado." ;;
+    status)
+      [[ -x /usr/local/bin/hextunnel-license ]] || fail "Hex Tunnel no está instalado."
+      exec /usr/local/bin/hextunnel-license status
+      ;;
     *) fail "Uso: install.sh [install|upgrade|status]" ;;
   esac
 
@@ -71,7 +79,8 @@ main(){
   printf 'Verificando licencia para %s...\n' "$action"
   response="$(curl -fsS --retry 2 --connect-timeout 8 --max-time 25 -H 'Content-Type: application/json' -H 'Cache-Control: no-store' --data-binary "$request" "$AUTH_ENDPOINT")" || fail "La API rechazó la solicitud."
   jq empty <<< "$response" >/dev/null 2>&1 || fail "La API devolvió JSON inválido."
-  status="$(jq -r '.status // empty' <<< "$response")"; [[ "$status" == valid ]] || fail "La licencia no es válida."
+  status="$(jq -r '.status // empty' <<< "$response")"
+  [[ "$status" == valid ]] || fail "La licencia no es válida."
   expires_at="$(jq -r '.expires_at // empty' <<< "$response")"
   download_expires_at="$(jq -r '.download_expires_at // empty' <<< "$response")"
   response_nonce="$(jq -r '.nonce // empty' <<< "$response")"
@@ -86,6 +95,7 @@ main(){
 
   [[ "$response_nonce" == "$nonce" ]] || fail "Nonce de autorización incorrecto."
   [[ "$subject" == "$ip" ]] || fail "La licencia fue autorizada para otra IP."
+  [[ -n "$version" ]] || fail "La autorización no incluye versión."
   [[ "$download_url" == https://* ]] || fail "La descarga privada no usa HTTPS."
   [[ "$package_sha256" =~ ^[0-9a-fA-F]{64}$ ]] || fail "SHA-256 inválido."
   [[ "$entrypoint" =~ ^[A-Za-z0-9._/-]+$ && "$entrypoint" != /* && "$entrypoint" != *".."* ]] || fail "Entrypoint inseguro."
@@ -93,9 +103,15 @@ main(){
   future_time "$expires_at" "La licencia"
   future_time "$download_expires_at" "El enlace"
 
-  tmp="$(mktemp -d /tmp/hextunnel-public.XXXXXX)"; trap 'rm -rf "${tmp:-}"' EXIT
-  public_key="$tmp/public.pem"; payload="$tmp/payload"; signature_file="$tmp/signature"; archive="$tmp/package.tar.gz"; extract_root="$tmp/extracted"
+  tmp="$(mktemp -d /tmp/hextunnel-public.XXXXXX)"
+  trap 'rm -rf "${tmp:-}"' EXIT
+  public_key="$tmp/public.pem"
+  payload="$tmp/payload"
+  signature_file="$tmp/signature"
+  archive="$tmp/package.tar.gz"
+  extract_root="$tmp/extracted"
   mkdir -p "$extract_root"
+
   curl -fsSL --retry 2 "$PUBLIC_KEY_URL" -o "$public_key" || fail "No se pudo descargar la clave pública."
   printf '%s  %s\n' "$PUBLIC_KEY_SHA256" "$public_key" | sha256sum -c - >/dev/null || fail "La clave pública no coincide con el hash fijado."
   openssl pkey -pubin -in "$public_key" -noout >/dev/null 2>&1 || fail "Clave pública inválida."
@@ -106,12 +122,19 @@ main(){
   printf 'Descargando Hex Tunnel %s...\n' "$version"
   curl -fsSL --retry 3 --connect-timeout 10 --max-time 300 "$download_url" -o "$archive" || fail "No se pudo descargar el paquete privado."
   printf '%s  %s\n' "${package_sha256,,}" "$archive" | sha256sum -c - >/dev/null || fail "El paquete no coincide con el SHA-256 autorizado."
-  tar -tzf "$archive" | grep -Eq '(^/|(^|/)\.\.(/|$))' && fail "El paquete contiene rutas inseguras."
+  if tar -tzf "$archive" | grep -Eq '(^/|(^|/)\.\.(/|$))'; then
+    fail "El paquete contiene rutas inseguras."
+  fi
   tar -xzf "$archive" -C "$extract_root"
-  if [[ -f "$extract_root/$entrypoint" ]]; then entrypoint_file="$extract_root/$entrypoint"; package_root="$extract_root"; else
+
+  if [[ -f "$extract_root/$entrypoint" ]]; then
+    entrypoint_file="$extract_root/$entrypoint"
+    package_root="$extract_root"
+  else
     mapfile -t matches < <(find "$extract_root" -type f -path "*/$entrypoint" -print)
     ((${#matches[@]} == 1)) || fail "No existe un entrypoint único."
-    entrypoint_file="${matches[0]}"; package_root="${entrypoint_file%/$entrypoint}"
+    entrypoint_file="${matches[0]}"
+    package_root="${entrypoint_file%/$entrypoint}"
   fi
 
   install -d -m 700 "$STATE_DIR"
@@ -127,9 +150,15 @@ HEXTUNNEL_UPDATED_AT=$(printf '%q' "$(date -u +%Y-%m-%dT%H:%M:%SZ)")
 EOF
   chmod 600 "$KEY_FILE" "$TOKEN_FILE" "$STATE_FILE" "$entrypoint_file"
 
-  export HEXTUNNEL_LICENSE_KEY="$key" HEXTUNNEL_LICENSE_PREVALIDATED=1 HEXTUNNEL_LICENSE_EXPIRES_AT="$expires_at"
-  export HEXTUNNEL_LICENSE_SUBJECT="$subject" HEXTUNNEL_PRIVATE_PACKAGE_ROOT="$package_root" HEXTUNNEL_TARGET_VERSION="$version"
-  export HEXTUNNEL_OPERATION="$action" HEXTUNNEL_NO_REBOOT="${HEXTUNNEL_NO_REBOOT:-1}"
+  export HEXTUNNEL_LICENSE_KEY="$key"
+  export HEXTUNNEL_LICENSE_PREVALIDATED=1
+  export HEXTUNNEL_LICENSE_EXPIRES_AT="$expires_at"
+  export HEXTUNNEL_LICENSE_SUBJECT="$subject"
+  export HEXTUNNEL_PRIVATE_PACKAGE_ROOT="$package_root"
+  export HEXTUNNEL_TARGET_VERSION="$version"
+  export HEXTUNNEL_OPERATION="$action"
+  export HEXTUNNEL_NO_REBOOT="${HEXTUNNEL_NO_REBOOT:-1}"
   exec bash "$entrypoint_file" "${@:2}"
 }
+
 main "$@"
