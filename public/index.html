@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Hex Tunnel: plataforma modular para administrar servicios de túnel en VPS con licencias verificadas, descargas privadas y actualizaciones firmadas.">
+  <meta name="theme-color" content="#070b14">
+  <title>Hex Tunnel — Infraestructura privada para VPS</title>
+  <style>
+    :root{color-scheme:dark;--bg:#070b14;--panel:#0d1423;--panel2:#111b2e;--text:#edf4ff;--muted:#9aa9c0;--line:#26344c;--accent:#60a5fa;--accent2:#22d3ee;--ok:#34d399;--shadow:0 24px 70px rgba(0,0,0,.38)}
+    *{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:radial-gradient(circle at 80% 5%,rgba(34,211,238,.12),transparent 30%),radial-gradient(circle at 15% 10%,rgba(96,165,250,.16),transparent 34%),var(--bg);color:var(--text);line-height:1.6}
+    a{color:inherit}.wrap{width:min(1120px,calc(100% - 36px));margin:auto}.nav{display:flex;align-items:center;justify-content:space-between;padding:24px 0}.brand{display:flex;align-items:center;gap:12px;font-weight:800;letter-spacing:.02em}.mark{width:38px;height:38px;border:1px solid rgba(96,165,250,.45);border-radius:12px;display:grid;place-items:center;background:linear-gradient(145deg,rgba(96,165,250,.18),rgba(34,211,238,.08));box-shadow:0 0 28px rgba(34,211,238,.12)}.nav a{text-decoration:none;color:var(--muted)}
+    .hero{padding:72px 0 54px;display:grid;grid-template-columns:1.15fr .85fr;gap:48px;align-items:center}.eyebrow{display:inline-flex;gap:9px;align-items:center;padding:7px 12px;border:1px solid var(--line);border-radius:999px;color:#cfe8ff;background:rgba(13,20,35,.72);font-size:.88rem}.dot{width:8px;height:8px;border-radius:50%;background:var(--ok);box-shadow:0 0 14px var(--ok)}h1{font-size:clamp(2.7rem,7vw,5.6rem);line-height:.98;letter-spacing:-.055em;margin:24px 0 22px}.gradient{background:linear-gradient(90deg,#fff 5%,#93c5fd 55%,#67e8f9);-webkit-background-clip:text;background-clip:text;color:transparent}.lead{font-size:1.12rem;color:var(--muted);max-width:690px}.actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:30px}.btn{display:inline-flex;align-items:center;justify-content:center;padding:13px 18px;border-radius:12px;text-decoration:none;font-weight:750;border:1px solid var(--line)}.primary{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#04111d;border:0}.secondary{background:rgba(13,20,35,.75)}
+    .terminal{background:#050912;border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow);overflow:hidden}.bar{display:flex;gap:7px;padding:14px 16px;border-bottom:1px solid var(--line)}.bar i{width:10px;height:10px;border-radius:50%;background:#334155}.bar i:first-child{background:#fb7185}.bar i:nth-child(2){background:#fbbf24}.bar i:nth-child(3){background:#34d399}pre{margin:0;padding:23px;white-space:pre-wrap;word-break:break-word;color:#b9e7ff;font:500 .88rem/1.7 ui-monospace,SFMono-Regular,Consolas,monospace}
+    section{padding:58px 0}.section-title{font-size:clamp(1.8rem,4vw,3rem);letter-spacing:-.035em;margin:0 0 12px}.section-copy{color:var(--muted);max-width:720px;margin:0 0 28px}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}.card{padding:24px;border:1px solid var(--line);border-radius:17px;background:linear-gradient(160deg,rgba(17,27,46,.95),rgba(9,15,27,.88));box-shadow:0 16px 45px rgba(0,0,0,.18)}.card h3{margin:4px 0 8px;font-size:1.05rem}.card p{margin:0;color:var(--muted);font-size:.95rem}.num{font:800 .8rem ui-monospace,monospace;color:var(--accent2)}
+    .notice{display:grid;grid-template-columns:auto 1fr;gap:16px;padding:22px;border:1px solid rgba(251,191,36,.35);border-radius:16px;background:rgba(251,191,36,.07)}.notice strong{color:#fde68a}.notice p{margin:0;color:#d7cba5}.developers{display:flex;gap:14px;flex-wrap:wrap}.developer{flex:1;min-width:250px;padding:20px;border:1px solid var(--line);border-radius:15px;background:rgba(13,20,35,.72)}.developer span{display:block;color:var(--muted);font-size:.9rem}.developer a{font-weight:800;text-decoration:none;color:#cfe8ff}
+    footer{padding:34px 0 45px;border-top:1px solid var(--line);color:var(--muted);font-size:.9rem}.footer-row{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap}
+    @media(max-width:850px){.hero{grid-template-columns:1fr;padding-top:38px}.grid{grid-template-columns:1fr}.nav>div:last-child{display:none}}
+  </style>
+</head>
+<body>
+  <header class="wrap nav">
+    <div class="brand"><div class="mark">HX</div> Hex Tunnel</div>
+    <div><a href="#seguridad">Seguridad</a> · <a href="#requisitos">Requisitos</a> · <a href="#desarrolladores">Desarrolladores</a></div>
+  </header>
+
+  <main>
+    <section class="wrap hero">
+      <div>
+        <div class="eyebrow"><span class="dot"></span> Plataforma de distribución operativa</div>
+        <h1><span class="gradient">Túneles administrados.</span><br>Instalación verificada.</h1>
+        <p class="lead">Hex Tunnel centraliza la instalación y administración de servicios de red en una VPS mediante licencias vinculadas, autorizaciones RSA, paquetes privados y actualizaciones controladas.</p>
+        <div class="actions"><a class="btn primary" href="#instalacion">Ver instalación</a><a class="btn secondary" href="https://t.me/Gh0stDeveloper">Contactar soporte</a></div>
+      </div>
+      <div class="terminal" id="instalacion">
+        <div class="bar"><i></i><i></i><i></i></div>
+        <pre># Ejecutar como usuario con sudo
+sudo bash -c 'command -v curl >/dev/null 2>&1 || { apt-get update -y &amp;&amp; apt-get install -y curl ca-certificates; }; curl -fsSL https://ghostdeveloper.duckdns.org/install.sh -o /tmp/hextunnel-install.sh &amp;&amp; chmod 700 /tmp/hextunnel-install.sh &amp;&amp; exec /tmp/hextunnel-install.sh install'
+
+# Después de instalar
+sudo hextunnel upgrade
+sudo hextunnel license status</pre>
+      </div>
+    </section>
+
+    <section class="wrap" id="seguridad">
+      <h2 class="section-title">Cadena privada y verificable</h2>
+      <p class="section-copy">Cada instalación obtiene una autorización temporal antes de recibir el paquete. La key completa no se almacena en texto plano en el servidor de licencias.</p>
+      <div class="grid">
+        <article class="card"><div class="num">01</div><h3>Licencia vinculada</h3><p>La activación se asocia a la IP pública y respeta vencimiento, estado y límite de activaciones.</p></article>
+        <article class="card"><div class="num">02</div><h3>Autorización RSA</h3><p>El instalador verifica una respuesta firmada y una clave pública fijada mediante SHA-256.</p></article>
+        <article class="card"><div class="num">03</div><h3>Descarga de un solo uso</h3><p>Los enlaces son temporales, privados, vinculados a IP y se invalidan después de utilizarse.</p></article>
+        <article class="card"><div class="num">04</div><h3>Integridad del paquete</h3><p>El archivo privado se valida con SHA-256 antes de extraer o ejecutar cualquier componente.</p></article>
+        <article class="card"><div class="num">05</div><h3>Renovación automática</h3><p>La instalación conserva un token de activación y renueva periódicamente su lease mediante systemd.</p></article>
+        <article class="card"><div class="num">06</div><h3>Actualización controlada</h3><p><code>hextunnel upgrade</code> vuelve a autorizar la VPS y descarga únicamente la release activa.</p></article>
+      </div>
+    </section>
+
+    <section class="wrap" id="requisitos">
+      <h2 class="section-title">Diseñado para una VPS dedicada</h2>
+      <div class="notice"><strong>Importante</strong><p>Hex Tunnel modifica servicios de red, firewall, puertos, SSH y componentes del sistema. Debe instalarse en una VPS amd64/x86_64 destinada especialmente a Hex Tunnel, no en el servidor donde se ejecutan el bot, la API, una web o aplicaciones críticas.</p></div>
+      <div class="grid" style="margin-top:16px">
+        <article class="card"><h3>Sistemas</h3><p>Debian 12, Ubuntu 22.04 LTS y Ubuntu 24.04 LTS.</p></article>
+        <article class="card"><h3>Arquitectura</h3><p>amd64/x86_64. El instalador rechaza ARM64 para evitar instalaciones incompatibles.</p></article>
+        <article class="card"><h3>Acceso</h3><p>Usuario con sudo o root, conexión a Internet estable y una licencia vigente emitida por TeleBotGen.</p></article>
+      </div>
+    </section>
+
+    <section class="wrap" id="desarrolladores">
+      <h2 class="section-title">Desarrolladores</h2>
+      <p class="section-copy">Hex Tunnel mantiene el crédito visible en el bot, el panel y la documentación pública.</p>
+      <div class="developers">
+        <div class="developer"><span>Integración, licencias e infraestructura</span><a href="https://t.me/Gh0stDeveloper">@Gh0stDeveloper</a></div>
+        <div class="developer"><span>Proyecto original y desarrollo base</span><a href="https://t.me/Jotchua_DevzZ">@Jotchua_DevzZ</a></div>
+      </div>
+    </section>
+  </main>
+
+  <footer><div class="wrap footer-row"><span>Hex Tunnel · Distribución privada</span><span>El acceso requiere una licencia vigente.</span></div></footer>
+</body>
+</html>
