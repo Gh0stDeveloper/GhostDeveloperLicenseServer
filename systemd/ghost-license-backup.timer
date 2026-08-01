@@ -1,0 +1,10 @@
+[Unit]
+Description=Backup diario de Ghost Developer License Server
+
+[Timer]
+OnCalendar=*-*-* 03:15:00 UTC
+RandomizedDelaySec=900
+Persistent=true
+
+[Install]
+WantedBy=timers.target
