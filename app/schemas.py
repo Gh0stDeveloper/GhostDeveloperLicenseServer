@@ -104,7 +104,7 @@ class AuthorizeRequest(BaseModel):
     nonce: str = Field(pattern=r"^[A-Fa-f0-9]{48}$")
     timestamp: int
     product: str = Field(default="hextunnel", pattern=PRODUCT_PATTERN)
-    action: Literal["install"] = "install"
+    action: Literal["install", "upgrade"] = "install"
 
 
 class AuthorizeResponse(BaseModel):
