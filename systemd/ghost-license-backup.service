@@ -1,0 +1,6 @@
+[Unit]
+Description=Backup de Ghost Developer License Server
+
+[Service]
+Type=oneshot
+ExecStart=/opt/ghostdeveloper-license-server/current/scripts/backup-database.sh
