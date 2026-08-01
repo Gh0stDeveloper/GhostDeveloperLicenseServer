@@ -25,7 +25,7 @@ REGISTER_SCRIPT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/register
 
 [[ "$COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'ERROR: commit_sha debe contener 40 caracteres hexadecimales.' >&2; exit 1; }
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo 'ERROR: versión inválida.' >&2; exit 1; }
-[[ -x "$REGISTER_SCRIPT" ]] || { echo "ERROR: falta $REGISTER_SCRIPT" >&2; exit 1; }
+[[ -f "$REGISTER_SCRIPT" ]] || { echo "ERROR: falta $REGISTER_SCRIPT" >&2; exit 1; }
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
@@ -125,7 +125,7 @@ fi
 } > "$BUILD_INFO"
 chmod 0600 "$BUILD_INFO"
 
-"$REGISTER_SCRIPT" \
+bash "$REGISTER_SCRIPT" \
   "$ARCHIVE" \
   "$VERSION" \
   hextunnel \
