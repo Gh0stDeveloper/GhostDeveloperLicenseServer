@@ -1,75 +1,101 @@
 # GhostDeveloperLicenseServer
 
-Servidor privado de licencias y distribución segura para **Hex Tunnel**, diseñado para integrarse con **TeleBotGen** y el bootstrap privado del proyecto.
+Servidor privado de licencias y distribución segura para **Hex Tunnel**, integrado con **TeleBotGen**, Nginx y el bootstrap público firmado.
 
 ## Estado
 
-Versión inicial: `0.1.0`
+Versión API: `0.1.0`
 
 Incluye:
 
 - API FastAPI en `127.0.0.1:8080`;
 - SQLite con WAL y transacciones;
-- generación de keys opacas;
-- almacenamiento HMAC-SHA256;
-- activaciones ligadas a IP;
-- límites de activación y reinicio administrativo;
-- revocación de licencias;
+- keys opacas almacenadas mediante HMAC-SHA256;
+- activaciones ligadas a IP, límites, revocación y reinicio administrativo;
 - prevención de replay mediante nonce;
-- autorización firmada RSA/SHA-256;
-- releases privadas con SHA-256;
+- autorización de instalación y actualización firmada con RSA/SHA-256;
+- releases privadas con verificación SHA-256;
 - enlaces temporales de descarga de un solo uso;
-- leases firmados para validación periódica del menú;
-- scripts de instalación, backup, registro de releases y creación manual de keys;
+- leases firmados para validación periódica;
+- página pública de Hex Tunnel;
+- bootstrap público con instalación de dependencias y validación amd64/x86_64;
+- scripts de instalación, backup, releases y licencias;
 - servicio systemd endurecido;
-- configuración de Nginx compatible con los dominios DuckDNS;
-- pruebas automatizadas y GitHub Actions.
+- configuración Nginx y pruebas automatizadas.
 
 ## Arquitectura
 
 ```text
 TeleBotGen
   └─ localhost + Bearer token
-     └─ POST /api/v1/admin/licenses
+     └─ /api/v1/admin/
 
 VPS del cliente
   └─ HTTPS
+     ├─ GET  ghostdeveloper.duckdns.org/
+     ├─ GET  ghostdeveloper.duckdns.org/install.sh
      ├─ POST ghostdeveloperkeys.duckdns.org/api/v1/install/authorize
      ├─ POST ghostdeveloperkeys.duckdns.org/api/v1/licenses/lease
      └─ GET  ghostdeveloperdownloads.duckdns.org/releases/<token>
 ```
 
-Los endpoints administrativos permanecen en localhost. Nginx solo publica autorización, lease, health, clave pública y descargas.
+Los endpoints administrativos permanecen en localhost. Nginx solo publica la web, el instalador, autorización, lease, health, clave pública y descargas temporales.
 
-## Instalación rápida en la VPS
+## Instalación o actualización en la VPS
 
 ```bash
 sudo bash scripts/install-server.sh
 ```
 
-Después integra las ubicaciones de `nginx/README.md` y comprueba:
+El script conserva la base de datos, los secretos RSA/HMAC, los releases y el archivo de entorno. También publica:
+
+```text
+/var/www/ghostdeveloper/index.html
+/var/www/ghostdeveloper/install.sh
+```
+
+Verificación:
 
 ```bash
 curl http://127.0.0.1:8080/health
 curl https://ghostdeveloperkeys.duckdns.org/health
 curl https://ghostdeveloperdownloads.duckdns.org/health
+curl -I https://ghostdeveloper.duckdns.org/
+curl -I https://ghostdeveloper.duckdns.org/install.sh
 ```
 
-## Primer flujo manual
-
-1. Copia un paquete a la VPS y regístralo:
+## Registrar una release
 
 ```bash
-sudo scripts/register-release.sh /ruta/hextunnel-1.0.0.tar.gz 1.0.0
+sudo scripts/register-release.sh \
+  /ruta/hextunnel-1.0.0-rc.2.tar.gz \
+  1.0.0-rc.2 \
+  hextunnel \
+  bin/hextunnel-private-install
 ```
 
-2. Genera una licencia:
+## Generar una licencia manual
 
 ```bash
-sudo scripts/create-license.sh 240 123456789 cliente
+sudo scripts/create-license.sh 240 123456789 cliente hextunnel
 ```
 
-3. Usa la key resultante con el bootstrap de Hex Tunnel.
+En producción, TeleBotGen realiza esta operación mediante la API administrativa local.
+
+## Instalación del cliente
+
+```bash
+sudo bash -c 'command -v curl >/dev/null 2>&1 || { apt-get update -y && apt-get install -y curl ca-certificates; }; curl -fsSL https://ghostdeveloper.duckdns.org/install.sh -o /tmp/hextunnel-install.sh && chmod 700 /tmp/hextunnel-install.sh && exec /tmp/hextunnel-install.sh install'
+```
+
+Después de instalar:
+
+```bash
+sudo hextunnel-license status
+sudo hextunnel-upgrade
+```
+
+Hex Tunnel debe ejecutarse en una VPS dedicada Debian 12 o Ubuntu 22.04/24.04, arquitectura amd64/x86_64. No debe instalarse en la VPS que aloja el bot y la API.
 
 ## Desarrollo
 
@@ -78,6 +104,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-dev.txt
 make check
+bash -n public/install.sh
 ```
 
 ## Documentación
@@ -85,12 +112,9 @@ make check
 - `docs/API.md`: contrato de endpoints.
 - `docs/DEPLOYMENT.md`: despliegue y operación.
 - `SECURITY.md`: modelo de seguridad.
-- `nginx/README.md`: integración con Nginx existente.
+- `nginx/README.md`: integración con Nginx.
 
-## Próximas integraciones
+## Desarrolladores
 
-- reemplazar el generador heredado de TeleBotGen por llamadas a la API administrativa;
-- guardar `activation_token` y lease firmado en Hex Tunnel;
-- publicar el paquete privado reproducible de Hex Tunnel;
-- añadir migraciones versionadas antes de la primera versión estable;
-- ejecutar pruebas de aceptación con una VPS cliente limpia `x86_64`.
+- `@Gh0stDeveloper`: integración, licencias e infraestructura.
+- `@Jotchua_DevzZ`: proyecto original y desarrollo base.
