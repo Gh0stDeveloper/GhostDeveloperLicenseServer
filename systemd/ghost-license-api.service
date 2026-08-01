@@ -1,0 +1,35 @@
+[Unit]
+Description=Ghost Developer License API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ghostlicense
+Group=ghostlicense
+WorkingDirectory=/opt/ghostdeveloper-license-server/current
+EnvironmentFile=/etc/ghostdeveloper-license/license-api.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/ghostdeveloper-license-server/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8080 --proxy-headers --forwarded-allow-ips=127.0.0.1
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=60
+TimeoutStopSec=30
+UMask=0077
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/ghostdeveloper-license
+ReadOnlyPaths=/etc/ghostdeveloper-license /var/www/ghostdeveloper/.well-known
+
+[Install]
+WantedBy=multi-user.target
