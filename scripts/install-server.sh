@@ -13,7 +13,8 @@ BACKUP_DIR=/var/backups/ghostdeveloper-license
 CONFIG_DIR=/etc/ghostdeveloper-license
 SECRET_DIR="$CONFIG_DIR/secrets"
 ENV_FILE="$CONFIG_DIR/license-api.env"
-PUBLIC_DIR=/var/www/ghostdeveloper/.well-known
+WEB_ROOT=/var/www/ghostdeveloper
+PUBLIC_DIR="$WEB_ROOT/.well-known"
 SERVICE_USER=ghostlicense
 SERVICE_GROUP=ghostlicense
 
@@ -33,7 +34,7 @@ install -d -m 0755 "$INSTALL_ROOT"
 install -d -o "$SERVICE_USER" -g "$SERVICE_GROUP" -m 0700 "$STATE_DIR" "$RELEASE_DIR"
 install -d -o root -g root -m 0700 "$BACKUP_DIR"
 install -d -o root -g "$SERVICE_GROUP" -m 0750 "$CONFIG_DIR" "$SECRET_DIR"
-install -d -o root -g root -m 0755 "$PUBLIC_DIR"
+install -d -o root -g root -m 0755 "$WEB_ROOT" "$PUBLIC_DIR"
 
 rm -rf "$APP_DIR.new"
 install -d -m 0755 "$APP_DIR.new"
@@ -49,7 +50,7 @@ if [[ -d "$APP_DIR" ]]; then
 fi
 mv "$APP_DIR.new" "$APP_DIR"
 chown -R root:root "$APP_DIR"
-chmod 0755 "$APP_DIR/scripts/"*.sh
+chmod 0755 "$APP_DIR/scripts/"*.sh "$APP_DIR/public/install.sh"
 
 if [[ ! -x "$VENV_DIR/bin/python" ]]; then
   python3 -m venv "$VENV_DIR"
@@ -84,6 +85,9 @@ chmod 0640 \
   "$SECRET_DIR/license-private.pem"
 chown root:root "$PUBLIC_DIR/hextunnel-license-public.pem"
 chmod 0644 "$PUBLIC_DIR/hextunnel-license-public.pem"
+
+install -o root -g root -m 0644 "$APP_DIR/public/index.html" "$WEB_ROOT/index.html"
+install -o root -g root -m 0755 "$APP_DIR/public/install.sh" "$WEB_ROOT/install.sh"
 
 if [[ ! -f "$ENV_FILE" ]]; then
   cat > "$ENV_FILE" <<'ENVEOF'
@@ -129,8 +133,8 @@ cat <<EOF2
 
 Instalación completada.
 API interna: http://127.0.0.1:8080/health
+Página pública: https://ghostdeveloper.duckdns.org/
+Instalador público: https://ghostdeveloper.duckdns.org/install.sh
 Token administrativo: $SECRET_DIR/admin-token
 Clave pública: $PUBLIC_DIR/hextunnel-license-public.pem
-
-Siguiente paso: integrar los bloques de nginx incluidos en nginx/README.md.
 EOF2
