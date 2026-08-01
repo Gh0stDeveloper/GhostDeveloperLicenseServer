@@ -38,8 +38,8 @@
 sudo bash -c 'command -v curl >/dev/null 2>&1 || { apt-get update -y &amp;&amp; apt-get install -y curl ca-certificates; }; curl -fsSL https://ghostdeveloper.duckdns.org/install.sh -o /tmp/hextunnel-install.sh &amp;&amp; chmod 700 /tmp/hextunnel-install.sh &amp;&amp; exec /tmp/hextunnel-install.sh install'
 
 # Después de instalar
-sudo hextunnel upgrade
-sudo hextunnel license status</pre>
+sudo hextunnel-upgrade
+sudo hextunnel-license status</pre>
       </div>
     </section>
 
@@ -52,7 +52,7 @@ sudo hextunnel license status</pre>
         <article class="card"><div class="num">03</div><h3>Descarga de un solo uso</h3><p>Los enlaces son temporales, privados, vinculados a IP y se invalidan después de utilizarse.</p></article>
         <article class="card"><div class="num">04</div><h3>Integridad del paquete</h3><p>El archivo privado se valida con SHA-256 antes de extraer o ejecutar cualquier componente.</p></article>
         <article class="card"><div class="num">05</div><h3>Renovación automática</h3><p>La instalación conserva un token de activación y renueva periódicamente su lease mediante systemd.</p></article>
-        <article class="card"><div class="num">06</div><h3>Actualización controlada</h3><p><code>hextunnel upgrade</code> vuelve a autorizar la VPS y descarga únicamente la release activa.</p></article>
+        <article class="card"><div class="num">06</div><h3>Actualización controlada</h3><p><code>hextunnel-upgrade</code> vuelve a autorizar la VPS y descarga únicamente la release activa.</p></article>
       </div>
     </section>
 
