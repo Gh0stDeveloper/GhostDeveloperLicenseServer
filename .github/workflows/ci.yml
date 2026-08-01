@@ -25,3 +25,14 @@ jobs:
       - run: python -m pip install -r requirements-dev.txt
       - run: python -m compileall -q app
       - run: python -m pytest -q
+      - name: Validate deployment and public Bash
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          bash -n public/install.sh
+          for script in scripts/*.sh; do bash -n "$script"; done
+          grep -Fq 'https://ghostdeveloperkeys.duckdns.org/api/v1/install/authorize' public/install.sh
+          grep -Fq '804f9b029d39dd9c9ba4246bcecf3cd9963a5555491f7da8dfc3cc6d24f6ec3e' public/install.sh
+          grep -Fq 'command -v curl' public/index.html
+          grep -Fq '@Gh0stDeveloper' public/index.html
+          grep -Fq '@Jotchua_DevzZ' public/index.html
