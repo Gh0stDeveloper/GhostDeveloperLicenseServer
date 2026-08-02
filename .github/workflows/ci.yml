@@ -33,6 +33,8 @@ jobs:
           for script in scripts/*.sh; do bash -n "$script"; done
           grep -Fq 'https://ghostdeveloperkeys.duckdns.org/api/v1/install/authorize' public/install.sh
           grep -Fq '804f9b029d39dd9c9ba4246bcecf3cd9963a5555491f7da8dfc3cc6d24f6ec3e' public/install.sh
+          grep -Fq 'amd64|x86_64|arm64|aarch64' public/install.sh
+          grep -Fq 'debian:12|ubuntu:22.04|ubuntu:24.04' public/install.sh
           grep -Fq '[[ -z "$key" && -r "$KEY_FILE" ]]' public/install.sh
           grep -Fq -- "-w '%{http_code}'" public/install.sh
           grep -Fq ".detail // empty" public/install.sh
