@@ -36,7 +36,9 @@ validate_platform(){
 
 read_key(){
   local key="${HEXTUNNEL_LICENSE_KEY:-}"
-  [[ -n "$key" ]] || key="$(tr -d '\r\n' < "$KEY_FILE" 2>/dev/null || true)"
+  if [[ -z "$key" && -r "$KEY_FILE" ]]; then
+    key="$(tr -d '\r\n' < "$KEY_FILE")"
+  fi
   if [[ -z "$key" && -t 0 ]]; then read -r -s -p "KEY: " key; printf '\n'; fi
   [[ -n "$key" ]] || fail "No se proporcionó una key."
   printf '%s' "$key"
@@ -54,6 +56,7 @@ canonical(){
 
 main(){
   local action="${1:-install}" key ip nonce timestamp request response tmp
+  local auth_body http_status api_detail
   local status expires_at download_expires_at response_nonce subject version download_url package_sha256 entrypoint signature activation_token lease_expires_at
   local public_key payload signature_file archive extract_root entrypoint_file package_root
   local -a matches=()
@@ -77,7 +80,27 @@ main(){
   request="$(jq -n --arg key "$key" --arg ip "$ip" --arg nonce "$nonce" --arg action "$action" --argjson timestamp "$timestamp" '{key:$key,ip:$ip,nonce:$nonce,timestamp:$timestamp,product:"hextunnel",action:$action}')"
 
   printf 'Verificando licencia para %s...\n' "$action"
-  response="$(curl -fsS --retry 2 --connect-timeout 8 --max-time 25 -H 'Content-Type: application/json' -H 'Cache-Control: no-store' --data-binary "$request" "$AUTH_ENDPOINT")" || fail "La API rechazó la solicitud."
+  auth_body="$(mktemp /tmp/hextunnel-auth.XXXXXX)"
+  if ! http_status="$(curl -sS --retry 2 --connect-timeout 8 --max-time 25 \
+    -H 'Accept: application/json' \
+    -H 'Content-Type: application/json' \
+    -H 'Cache-Control: no-store' \
+    --data-binary "$request" \
+    -o "$auth_body" \
+    -w '%{http_code}' \
+    "$AUTH_ENDPOINT")"; then
+    rm -f "$auth_body"
+    fail "No se pudo contactar la API de licencias."
+  fi
+  response="$(cat "$auth_body")"
+  rm -f "$auth_body"
+
+  if [[ ! "$http_status" =~ ^2[0-9]{2}$ ]]; then
+    api_detail="$(jq -r '.detail // empty' <<< "$response" 2>/dev/null || true)"
+    [[ -n "$api_detail" ]] || api_detail="respuesta HTTP sin detalle"
+    fail "La API rechazó la solicitud: ${api_detail} (HTTP ${http_status})."
+  fi
+
   jq empty <<< "$response" >/dev/null 2>&1 || fail "La API devolvió JSON inválido."
   status="$(jq -r '.status // empty' <<< "$response")"
   [[ "$status" == valid ]] || fail "La licencia no es válida."
