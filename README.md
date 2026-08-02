@@ -57,12 +57,18 @@ sudo ghostctl releases hextunnel
 sudo ghostctl activate hextunnel 1.0.0-rc.3
 sudo ghostctl deploy-server
 sudo ghostctl deploy-bot
-sudo ghostctl publish-hextunnel <COMMIT_SHA>
-sudo ghostctl release-all <COMMIT_SHA>
+sudo ghostctl publish-hextunnel <COMMIT_SHA> [VERSION]
+sudo ghostctl release-all <COMMIT_SHA> [VERSION] [SERVER_REF] [BOT_REF]
 sudo ghostctl rollback-server
 ```
 
 `release-all` actualiza el servidor, publica Hex Tunnel, actualiza TeleBotGen y ejecuta las comprobaciones de salud.
+
+## Documentación operativa
+
+- [Actualizaciones independientes de Hex Tunnel, LicenseServer y TeleBotGen](docs/ACTUALIZACIONES.md)
+
+La guía explica los comandos por componente, validaciones posteriores, rollback, diagnóstico y la diferencia entre publicar Hex Tunnel e instalarlo en una VPS cliente.
 
 ## Despliegue del servidor
 
@@ -86,6 +92,12 @@ La versión se obtiene automáticamente desde el archivo `VERSION` del commit:
 
 ```bash
 sudo ghostctl publish-hextunnel <COMMIT_SHA_COMPLETO>
+```
+
+También puede especificarse explícitamente:
+
+```bash
+sudo ghostctl publish-hextunnel <COMMIT_SHA_COMPLETO> <VERSION>
 ```
 
 Antes de registrar el paquete se ejecuta el gate completo de producción, se resuelve el component lock y se valida el TAR.GZ. Registrar nuevamente el mismo archivo y versión es idempotente; una versión existente con otro hash se rechaza.
