@@ -25,7 +25,7 @@ on:
         required: false
         type: string
       server_ref:
-        description: Ref de LicenseServer
+        description: Ref de LicenseServer que se desplegará
         required: false
         default: agent/public-bootstrap-web
         type: string
@@ -49,6 +49,9 @@ jobs:
     environment: production
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.server_ref }}
+          fetch-depth: 1
 
       - name: Validate inputs
         shell: bash
@@ -99,7 +102,6 @@ jobs:
           ACTION: ${{ inputs.action }}
           HEX_COMMIT: ${{ inputs.hextunnel_commit }}
           HEX_VERSION: ${{ inputs.hextunnel_version }}
-          SERVER_REF: ${{ inputs.server_ref }}
           BOT_REF: ${{ inputs.bot_ref }}
         run: |
           set -Eeuo pipefail
@@ -129,12 +131,8 @@ jobs:
           }
 
           case "$ACTION" in
-            status)
-              remote_ghostctl status
-              ;;
-            smoke)
-              remote_ghostctl smoke
-              ;;
+            status) remote_ghostctl status ;;
+            smoke) remote_ghostctl smoke ;;
             deploy-server)
               deploy_server_checkout
               remote_ghostctl status
