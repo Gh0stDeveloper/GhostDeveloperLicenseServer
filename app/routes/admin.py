@@ -55,6 +55,25 @@ def create_license(
 ) -> LicenseCreatedResponse:
     begin_immediate(session)
     current_time = now_epoch()
+
+    if payload.owner_telegram_id:
+        existing = session.scalar(
+            select(License)
+            .where(
+                License.product == payload.product,
+                License.owner_telegram_id == payload.owner_telegram_id,
+                License.status.in_(("active", "activated")),
+                License.expires_at > current_time,
+            )
+            .order_by(License.created_at.desc())
+        )
+        if existing is not None:
+            session.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="El usuario ya tiene una licencia activa",
+            )
+
     key, key_hash = generate_unique_license(session, secrets)
     row = License(
         id=str(uuid.uuid4()),
@@ -240,7 +259,10 @@ def activate_release(
     release = session.get(Release, release_id)
     if release is None:
         raise HTTPException(status_code=404, detail="Release no encontrada")
-    package = resolve_release_path(settings, str(release_to_response(release, settings.release_root).relative_path))
+    package = resolve_release_path(
+        settings,
+        str(release_to_response(release, settings.release_root).relative_path),
+    )
     validate_release_archive(package, release.entrypoint)
     checksum = sha256_file(package)
     if checksum != release.sha256:
