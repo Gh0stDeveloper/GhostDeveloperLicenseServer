@@ -27,11 +27,17 @@ install_dependencies(){
 validate_platform(){
   local architecture
   architecture="$(dpkg --print-architecture 2>/dev/null || uname -m)"
-  case "$architecture" in amd64|x86_64) ;; *) fail "Hex Tunnel requiere una VPS dedicada amd64/x86_64. Detectado: $architecture" ;; esac
+  case "$architecture" in
+    amd64|x86_64|arm64|aarch64) ;;
+    *) fail "Hex Tunnel requiere una VPS dedicada amd64/x86_64 o arm64/aarch64. Detectado: $architecture" ;;
+  esac
   [[ -r /etc/os-release ]] || fail "No se pudo identificar el sistema operativo."
   # shellcheck disable=SC1091
   source /etc/os-release
-  case "${ID:-}" in ubuntu|debian) ;; *) fail "Usa Debian 12 o Ubuntu 22.04/24.04 en una VPS dedicada." ;; esac
+  case "${ID:-}:${VERSION_ID:-}" in
+    debian:12|ubuntu:22.04|ubuntu:24.04) ;;
+    *) fail "Usa Debian 12 o Ubuntu 22.04/24.04 en una VPS dedicada." ;;
+  esac
 }
 
 read_key(){
