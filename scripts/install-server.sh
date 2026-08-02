@@ -143,10 +143,16 @@ chown -R root:root "$APP_DIR"
 find "$APP_DIR" -type d -exec chmod 0755 {} +
 chmod 0755 "$APP_DIR/scripts/"*.sh "$APP_DIR/public/install.sh"
 
-python3 -m venv "$APP_DIR/.venv"
-"$APP_DIR/.venv/bin/python" -m pip install --upgrade pip setuptools wheel
-"$APP_DIR/.venv/bin/python" -m pip install -r "$APP_DIR/requirements.txt"
-"$APP_DIR/.venv/bin/python" -m compileall -q "$APP_DIR/app"
+(
+  umask 022
+  python3 -m venv "$APP_DIR/.venv"
+  "$APP_DIR/.venv/bin/python" -m pip install --upgrade pip setuptools wheel
+  "$APP_DIR/.venv/bin/python" -m pip install -r "$APP_DIR/requirements.txt"
+  "$APP_DIR/.venv/bin/python" -m compileall -q "$APP_DIR/app"
+)
+chown -R root:root "$APP_DIR/.venv"
+chmod -R a+rX,go-w "$APP_DIR/.venv"
+runuser -u "$SERVICE_USER" -- "$APP_DIR/.venv/bin/python" -c 'import fastapi, sqlalchemy, cryptography'
 
 set -a
 # shellcheck disable=SC1090
