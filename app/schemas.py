@@ -85,6 +85,11 @@ class ReleaseCreateRequest(BaseModel):
         return normalized
 
 
+class ReleaseActivateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(default="Promoción administrativa", min_length=3, max_length=500)
+
+
 class ReleaseResponse(BaseModel):
     id: str
     product: str
