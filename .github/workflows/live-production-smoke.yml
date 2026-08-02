@@ -33,7 +33,46 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install smoke dependencies
-        run: sudo apt-get update -y && sudo apt-get install -y jq openssl openssh-client
+        run: sudo apt-get update -y && sudo apt-get install -y jq openssl openssh-client dnsutils
+
+      - name: Diagnose public endpoints
+        shell: bash
+        run: |
+          set +e
+          report=/tmp/public-endpoint-diagnostics.txt
+          : > "$report"
+          for host in \
+            ghostdeveloper.duckdns.org \
+            ghostdeveloperkeys.duckdns.org \
+            ghostdeveloperdownloads.duckdns.org; do
+            {
+              echo "=== DNS $host ==="
+              getent ahosts "$host"
+              dig +short A "$host" @1.1.1.1
+              dig +short AAAA "$host" @1.1.1.1
+              echo
+            } >> "$report" 2>&1
+          done
+          for url in \
+            https://ghostdeveloperkeys.duckdns.org/health \
+            https://ghostdeveloperdownloads.duckdns.org/health \
+            https://ghostdeveloper.duckdns.org/install.sh \
+            https://ghostdeveloper.duckdns.org/; do
+            body="$(mktemp)"
+            headers="$(mktemp)"
+            status="$(curl -sS --connect-timeout 8 --max-time 20 \
+              -D "$headers" -o "$body" -w '%{http_code}' "$url")"
+            {
+              echo "=== HTTP $url ==="
+              echo "status=$status"
+              sed -n '1,20p' "$headers"
+              head -c 600 "$body"
+              echo
+              echo
+            } >> "$report" 2>&1
+            rm -f "$body" "$headers"
+          done
+          cat "$report"
 
       - name: Prepare optional production SSH
         id: ssh
@@ -83,6 +122,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: live-production-smoke-${{ github.run_id }}
-          path: /tmp/ghostdeveloper-live-smoke.txt
+          path: |
+            /tmp/ghostdeveloper-live-smoke.txt
+            /tmp/public-endpoint-diagnostics.txt
           if-no-files-found: warn
           retention-days: 7
