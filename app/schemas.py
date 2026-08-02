@@ -85,6 +85,11 @@ class ReleaseCreateRequest(BaseModel):
         return normalized
 
 
+class ReleaseActivateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason: str = Field(default="Promoción administrativa", min_length=3, max_length=500)
+
+
 class ReleaseResponse(BaseModel):
     id: str
     product: str
@@ -104,7 +109,7 @@ class AuthorizeRequest(BaseModel):
     nonce: str = Field(pattern=r"^[A-Fa-f0-9]{48}$")
     timestamp: int
     product: str = Field(default="hextunnel", pattern=PRODUCT_PATTERN)
-    action: Literal["install"] = "install"
+    action: Literal["install", "upgrade"] = "install"
 
 
 class AuthorizeResponse(BaseModel):
