@@ -25,20 +25,42 @@ jobs:
       - run: python -m pip install -r requirements-dev.txt
       - run: python -m compileall -q app
       - run: python -m pytest -q
-      - name: Validate deployment and public Bash
+
+      - name: Validate deployment, automation and public Bash
         shell: bash
         run: |
           set -Eeuo pipefail
           bash -n public/install.sh
           for script in scripts/*.sh; do bash -n "$script"; done
+          grep -Fq '__version__ = "0.2.0"' app/__init__.py
+
           grep -Fq 'https://ghostdeveloperkeys.duckdns.org/api/v1/install/authorize' public/install.sh
           grep -Fq '804f9b029d39dd9c9ba4246bcecf3cd9963a5555491f7da8dfc3cc6d24f6ec3e' public/install.sh
           grep -Fq 'amd64|x86_64|arm64|aarch64' public/install.sh
           grep -Fq 'debian:12|ubuntu:22.04|ubuntu:24.04' public/install.sh
           grep -Fq '[[ -z "$key" && -r "$KEY_FILE" ]]' public/install.sh
           grep -Fq -- "-w '%{http_code}'" public/install.sh
-          grep -Fq ".detail // empty" public/install.sh
+          grep -Fq '.detail // empty' public/install.sh
           grep -Fq 'La API rechazó la solicitud: ${api_detail} (HTTP ${http_status}).' public/install.sh
+
+          grep -Fq '/opt/ghostdeveloper-license-server/releases' scripts/install-server.sh
+          grep -Fq 'wait_for_health' scripts/install-server.sh
+          grep -Fq 'restaurando la release anterior' scripts/install-server.sh
+          grep -Fq 'predeploy-$RELEASE_ID.db' scripts/install-server.sh
+          grep -Fq '/usr/local/sbin/ghostctl' scripts/install-server.sh
+          grep -Fq 'release-all' scripts/ghostctl.sh
+          grep -Fq 'TELEBOTGEN_SOURCE_ROOT="$work"' scripts/ghostctl.sh
+          grep -Fq 'publish-hextunnel-release.sh "$commit"' scripts/ghostctl.sh
+          grep -Fq 'HEXTUNNEL_RELEASE_BUILD=1' scripts/publish-hextunnel-release.sh
+          grep -Fq '/releases/$EXISTING_ID/activate' scripts/register-release.sh
+          grep -Fq 'GHOST_VPS_SSH_PRIVATE_KEY' .github/workflows/production-operations.yml
+          grep -Fq 'scripts/live-production-smoke.sh' .github/workflows/live-production-smoke.yml
+
+          ! grep -REn 'Authorization: Bearer \$TOKEN|Authorization: Bearer \$token' \
+            scripts/create-license.sh scripts/revoke-license.sh scripts/ghostctl.sh
+          grep -Fq '/usr/local/sbin/ghostctl create-key' scripts/create-license.sh
+          grep -Fq '/usr/local/sbin/ghostctl revoke-key' scripts/revoke-license.sh
+
           grep -Fq 'command -v curl' public/index.html
           grep -Fq '@Gh0stDeveloper' public/index.html
           grep -Fq '@Jotchua_DevzZ' public/index.html
