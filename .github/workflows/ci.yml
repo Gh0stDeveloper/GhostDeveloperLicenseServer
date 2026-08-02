@@ -33,6 +33,10 @@ jobs:
           for script in scripts/*.sh; do bash -n "$script"; done
           grep -Fq 'https://ghostdeveloperkeys.duckdns.org/api/v1/install/authorize' public/install.sh
           grep -Fq '804f9b029d39dd9c9ba4246bcecf3cd9963a5555491f7da8dfc3cc6d24f6ec3e' public/install.sh
+          grep -Fq '[[ -z "$key" && -r "$KEY_FILE" ]]' public/install.sh
+          grep -Fq "-w '%{http_code}'" public/install.sh
+          grep -Fq ".detail // empty" public/install.sh
+          grep -Fq 'La API rechazó la solicitud: ${api_detail} (HTTP ${http_status}).' public/install.sh
           grep -Fq 'command -v curl' public/index.html
           grep -Fq '@Gh0stDeveloper' public/index.html
           grep -Fq '@Jotchua_DevzZ' public/index.html
