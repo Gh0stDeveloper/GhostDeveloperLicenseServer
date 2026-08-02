@@ -5,38 +5,41 @@ umask 077
 usage() {
   cat >&2 <<'EOF'
 Uso:
-  sudo scripts/publish-hextunnel-release.sh <commit_sha> <version>
+  sudo scripts/publish-hextunnel-release.sh <commit_sha> [version]
 
-Ejemplo:
-  sudo scripts/publish-hextunnel-release.sh \
-    eb8b750f8d2df93fabf1f3505ee26fc9519042ee \
-    1.0.0-rc.2
+La versión se obtiene automáticamente del archivo VERSION del commit. Si se
+indica manualmente, debe coincidir exactamente.
 EOF
   exit 2
 }
 
 [[ "${EUID:-$(id -u)}" -eq 0 ]] || { echo 'ERROR: se requiere root.' >&2; exit 1; }
-[[ $# -eq 2 ]] || usage
+[[ $# -ge 1 && $# -le 2 ]] || usage
 
 COMMIT_SHA="${1,,}"
-VERSION="$2"
+REQUESTED_VERSION="${2:-}"
 REPOSITORY_URL="${HEXTUNNEL_SOURCE_REPOSITORY:-https://github.com/Gh0stDeveloper/Porno-OS.git}"
 REGISTER_SCRIPT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)/register-release.sh"
 
 [[ "$COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'ERROR: commit_sha debe contener 40 caracteres hexadecimales.' >&2; exit 1; }
-[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo 'ERROR: versión inválida.' >&2; exit 1; }
+[[ -z "$REQUESTED_VERSION" || "$REQUESTED_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] \
+  || { echo 'ERROR: versión inválida.' >&2; exit 1; }
 [[ -f "$REGISTER_SCRIPT" ]] || { echo "ERROR: falta $REGISTER_SCRIPT" >&2; exit 1; }
 
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -y
-apt-get install -y --no-install-recommends git rsync tar gzip ca-certificates jq
+missing=0
+for command in git rsync tar gzip jq shellcheck curl; do
+  command -v "$command" >/dev/null 2>&1 || missing=1
+done
+if ((missing)); then
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -y
+  apt-get install -y --no-install-recommends \
+    git rsync tar gzip ca-certificates jq shellcheck curl
+fi
 
 WORK_ROOT="$(mktemp -d /tmp/hextunnel-publish.XXXXXX)"
 SOURCE_DIR="$WORK_ROOT/source"
 STAGE_DIR="$WORK_ROOT/stage"
-ARCHIVE="/root/hextunnel-$VERSION.tar.gz"
-BUILD_INFO="/root/hextunnel-$VERSION-build-info.txt"
-RELEASE_JSON="/root/hextunnel-$VERSION-release.json"
 trap 'rm -rf "${WORK_ROOT:-}"' EXIT
 
 mkdir -p "$SOURCE_DIR" "$STAGE_DIR"
@@ -51,18 +54,20 @@ RESOLVED_COMMIT="$(git -C "$SOURCE_DIR" rev-parse HEAD)"
   exit 1
 }
 
-SOURCE_VERSION="$(tr -d '\r\n' < "$SOURCE_DIR/VERSION" 2>/dev/null || true)"
-[[ "$SOURCE_VERSION" == "$VERSION" ]] || {
-  echo "ERROR: VERSION del repositorio es '$SOURCE_VERSION'; se solicitó '$VERSION'." >&2
+VERSION="$(tr -d '\r\n' < "$SOURCE_DIR/VERSION" 2>/dev/null || true)"
+[[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] \
+  || { echo "ERROR: VERSION del repositorio es inválida: '$VERSION'." >&2; exit 1; }
+if [[ -n "$REQUESTED_VERSION" && "$REQUESTED_VERSION" != "$VERSION" ]]; then
+  echo "ERROR: VERSION del repositorio es '$VERSION'; se solicitó '$REQUESTED_VERSION'." >&2
   exit 1
-}
+fi
 
-bash -n "$SOURCE_DIR/install.sh"
-bash -n "$SOURCE_DIR/bin/hextunnel-private-install"
-bash -n "$SOURCE_DIR/bin/hextunnel-private-upgrade"
-bash -n "$SOURCE_DIR/bin/hextunnel-license"
-bash "$SOURCE_DIR/tests/security/test-hardening.sh"
-bash "$SOURCE_DIR/tests/unit/test-license-runtime.sh"
+ARCHIVE="/root/hextunnel-$VERSION.tar.gz"
+BUILD_INFO="/root/hextunnel-$VERSION-build-info.txt"
+RELEASE_JSON="/root/hextunnel-$VERSION-release.json"
+
+bash "$SOURCE_DIR/scripts/resolve-component-lock.sh" "$SOURCE_DIR/config/component-lock.env"
+HEXTUNNEL_RELEASE_BUILD=1 bash "$SOURCE_DIR/scripts/production-readiness.sh"
 
 rsync -a --delete \
   --exclude='.git/' \
@@ -100,6 +105,7 @@ done
 rm -f "$ARCHIVE" "$RELEASE_JSON"
 tar \
   --sort=name \
+  --mtime="@$(git -C "$SOURCE_DIR" log -1 --format=%ct)" \
   --owner=0 \
   --group=0 \
   --numeric-owner \
