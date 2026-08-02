@@ -27,6 +27,8 @@ Uso:
   ghostctl releases [producto]
   ghostctl activate <producto> <version>
   ghostctl create-key [minutos] [telegram_id] [username]
+  ghostctl license <license_id>
+  ghostctl revoke-key <license_id> [motivo]
   ghostctl deploy-server [ref]
   ghostctl rollback-server
   ghostctl deploy-bot [ref]
@@ -38,19 +40,29 @@ EOF
 }
 
 admin_curl() {
-  local method="$1" path="$2" payload="${3:-}" token config
+  local method="$1" path="$2" payload="${3:-}" token config status body
   [[ -s "$ADMIN_TOKEN_FILE" ]] || fail "falta $ADMIN_TOKEN_FILE"
   token="$(tr -d '\r\n' < "$ADMIN_TOKEN_FILE")"
   config="$(mktemp /tmp/ghostctl-curl.XXXXXX)"
+  body="$(mktemp /tmp/ghostctl-body.XXXXXX)"
   printf 'header = "Authorization: Bearer %s"\n' "$token" > "$config"
-  chmod 600 "$config"
+  chmod 600 "$config" "$body"
   if [[ "$method" == GET ]]; then
-    curl -fsS --connect-timeout 3 --max-time 30 --config "$config" "$API_BASE$path"
+    status="$(curl -sS --connect-timeout 3 --max-time 30 --config "$config" \
+      -o "$body" -w '%{http_code}' "$API_BASE$path")"
   else
-    curl -fsS --connect-timeout 3 --max-time 60 --config "$config" \
-      -H 'Content-Type: application/json' --data-binary "$payload" -X "$method" "$API_BASE$path"
+    status="$(curl -sS --connect-timeout 3 --max-time 60 --config "$config" \
+      -H 'Content-Type: application/json' --data-binary "$payload" -X "$method" \
+      -o "$body" -w '%{http_code}' "$API_BASE$path")"
   fi
   rm -f "$config"
+  if [[ ! "$status" =~ ^2[0-9]{2}$ ]]; then
+    printf 'API HTTP %s: %s\n' "$status" "$(jq -r '.detail // .' "$body" 2>/dev/null || cat "$body")" >&2
+    rm -f "$body"
+    return 1
+  fi
+  cat "$body"
+  rm -f "$body"
 }
 
 api_online() {
@@ -110,8 +122,7 @@ smoke_command() {
 releases_command() {
   local product="${1:-hextunnel}"
   admin_curl GET "/api/v1/admin/releases?product=$product" \
-    | jq -r '.[] | [.version, (if .active then "ACTIVE" else "inactive" end), .sha256, .relative_path] | @tsv' \
-    | column -t -s $'\t'
+    | jq -r '.[] | "\(.version)\t\(if .active then "ACTIVE" else "inactive" end)\t\(.sha256)\t\(.relative_path)"'
 }
 
 activate_command() {
@@ -120,7 +131,7 @@ activate_command() {
   data="$(admin_curl GET "/api/v1/admin/releases?product=$product")"
   release_id="$(jq -r --arg version "$version" '.[] | select(.version == $version) | .id' <<< "$data" | head -n1)"
   [[ -n "$release_id" && "$release_id" != null ]] || fail "no existe $product $version"
-  payload="$(jq -n --arg reason "Activada mediante ghostctl" '{reason:$reason}')"
+  payload="$(jq -n --arg reason 'Activada mediante ghostctl' '{reason:$reason}')"
   admin_curl POST "/api/v1/admin/releases/$release_id/activate" "$payload" | jq .
 }
 
@@ -137,19 +148,33 @@ create_key_command() {
   admin_curl POST '/api/v1/admin/licenses' "$payload" | jq .
 }
 
+license_command() {
+  local license_id="${1:-}"
+  [[ "$license_id" =~ ^[0-9a-fA-F-]{36}$ ]] || fail 'license_id inválido.'
+  admin_curl GET "/api/v1/admin/licenses/$license_id" | jq .
+}
+
+revoke_key_command() {
+  local license_id="${1:-}" reason="${2:-Revocada mediante ghostctl}" payload
+  [[ "$license_id" =~ ^[0-9a-fA-F-]{36}$ ]] || fail 'license_id inválido.'
+  payload="$(jq -n --arg reason "$reason" '{reason:$reason}')"
+  admin_curl POST "/api/v1/admin/licenses/$license_id/revoke" "$payload" | jq .
+}
+
 github_download() {
-  local repository="$1" ref="$2" destination="$3" url token
+  local repository="$1" ref="$2" destination="$3" url token config
   url="https://api.github.com/repos/${repository}/tarball/${ref}"
   if [[ -s "$GITHUB_TOKEN_FILE" ]]; then
     token="$(tr -d '\r\n' < "$GITHUB_TOKEN_FILE")"
-    curl -fL --retry 3 --connect-timeout 10 --max-time 300 \
-      -H 'Accept: application/vnd.github+json' \
-      -H "Authorization: Bearer $token" \
-      -o "$destination" "$url"
+    config="$(mktemp /tmp/ghostctl-github.XXXXXX)"
+    printf 'header = "Authorization: Bearer %s"\n' "$token" > "$config"
+    chmod 600 "$config"
+    curl -fL --retry 3 --connect-timeout 10 --max-time 300 --config "$config" \
+      -H 'Accept: application/vnd.github+json' -o "$destination" "$url"
+    rm -f "$config"
   else
     curl -fL --retry 3 --connect-timeout 10 --max-time 300 \
-      -H 'Accept: application/vnd.github+json' \
-      -o "$destination" "$url"
+      -H 'Accept: application/vnd.github+json' -o "$destination" "$url"
   fi
 }
 
@@ -165,19 +190,16 @@ extract_repository() {
 deploy_server_command() {
   local ref="${1:-$SERVER_REF}" work
   work="$(mktemp -d /tmp/ghostctl-server.XXXXXX)"
-  trap 'rm -rf "${work:-}"' RETURN
   log "Descargando $SERVER_REPOSITORY@$ref"
   extract_repository "$SERVER_REPOSITORY" "$ref" "$work"
   bash -n "$work/scripts/install-server.sh"
   bash "$work/scripts/install-server.sh"
   rm -rf "$work"
-  trap - RETURN
 }
 
 deploy_bot_command() {
   local ref="${1:-$BOT_REF}" work
   work="$(mktemp -d /tmp/ghostctl-bot.XXXXXX)"
-  trap 'rm -rf "${work:-}"' RETURN
   log "Descargando $BOT_REPOSITORY@$ref"
   extract_repository "$BOT_REPOSITORY" "$ref" "$work"
   TELEBOTGEN_REPOSITORY="$BOT_REPOSITORY" TELEBOTGEN_REF="$ref" \
@@ -185,7 +207,6 @@ deploy_bot_command() {
   systemctl is-active --quiet telebotgen.service \
     || fail 'TeleBotGen no quedó activo después del despliegue.'
   rm -rf "$work"
-  trap - RETURN
 }
 
 publish_hextunnel_command() {
@@ -275,6 +296,8 @@ main() {
     releases) releases_command "${2:-hextunnel}" ;;
     activate) activate_command "${2:-}" "${3:-}" ;;
     create-key) create_key_command "${2:-240}" "${3:-}" "${4:-}" ;;
+    license) license_command "${2:-}" ;;
+    revoke-key) revoke_key_command "${2:-}" "${3:-Revocada mediante ghostctl}" ;;
     deploy-server) deploy_server_command "${2:-$SERVER_REF}" ;;
     rollback-server) rollback_server_command ;;
     deploy-bot) deploy_bot_command "${2:-$BOT_REF}" ;;
