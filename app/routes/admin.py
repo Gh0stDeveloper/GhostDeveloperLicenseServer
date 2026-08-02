@@ -21,6 +21,7 @@ from app.schemas import (
     LicenseCreatedResponse,
     LicenseListResponse,
     LicenseResponse,
+    ReleaseActivateRequest,
     ReleaseCreateRequest,
     ReleaseResponse,
     ResetActivationRequest,
@@ -85,6 +86,8 @@ def create_license(
 def list_licenses(
     status_filter: str | None = Query(default=None, alias="status"),
     product: str | None = None,
+    owner_telegram_id: str | None = Query(default=None, max_length=32),
+    active_only: bool = False,
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     session: Session = Depends(get_session),
@@ -94,6 +97,15 @@ def list_licenses(
         conditions.append(License.status == status_filter)
     if product:
         conditions.append(License.product == product)
+    if owner_telegram_id:
+        conditions.append(License.owner_telegram_id == owner_telegram_id)
+    if active_only:
+        conditions.extend(
+            [
+                License.status.in_(("active", "activated")),
+                License.expires_at > now_epoch(),
+            ]
+        )
     query = select(License).order_by(License.created_at.desc()).limit(limit).offset(offset)
     count_query = select(func.count()).select_from(License)
     if conditions:
@@ -214,6 +226,43 @@ def create_release(
             status_code=status.HTTP_409_CONFLICT,
             detail="Ya existe una release con ese producto y versión",
         ) from exc
+    return release_to_response(release, settings.release_root)
+
+
+@router.post("/releases/{release_id}/activate", response_model=ReleaseResponse)
+def activate_release(
+    release_id: str,
+    payload: ReleaseActivateRequest,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(get_settings_from_app),
+) -> ReleaseResponse:
+    begin_immediate(session)
+    release = session.get(Release, release_id)
+    if release is None:
+        raise HTTPException(status_code=404, detail="Release no encontrada")
+    package = resolve_release_path(settings, str(release_to_response(release, settings.release_root).relative_path))
+    validate_release_archive(package, release.entrypoint)
+    checksum = sha256_file(package)
+    if checksum != release.sha256:
+        raise HTTPException(status_code=409, detail="El paquete cambió desde que fue registrado")
+    session.execute(
+        update(Release)
+        .where(Release.product == release.product, Release.id != release.id)
+        .values(active=False)
+    )
+    release.active = True
+    add_audit(
+        session,
+        event_type="release.activated",
+        actor="admin-api",
+        subject=release.id,
+        details={
+            "product": release.product,
+            "version": release.version,
+            "reason": payload.reason,
+        },
+    )
+    session.commit()
     return release_to_response(release, settings.release_root)
 
 
