@@ -1,0 +1,162 @@
+name: Production operations
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Operación a ejecutar
+        required: true
+        default: status
+        type: choice
+        options:
+          - status
+          - smoke
+          - deploy-server
+          - deploy-bot
+          - publish-hextunnel
+          - release-all
+          - rollback-server
+      hextunnel_commit:
+        description: Commit SHA completo de Hex Tunnel
+        required: false
+        type: string
+      hextunnel_version:
+        description: Versión opcional; vacío usa VERSION del commit
+        required: false
+        type: string
+      server_ref:
+        description: Ref de LicenseServer
+        required: false
+        default: agent/public-bootstrap-web
+        type: string
+      bot_ref:
+        description: Ref de TeleBotGen
+        required: false
+        default: feat/hextunnel-license-integration
+        type: string
+
+concurrency:
+  group: ghostdeveloper-production-operations
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  operate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate inputs
+        shell: bash
+        env:
+          ACTION: ${{ inputs.action }}
+          HEX_COMMIT: ${{ inputs.hextunnel_commit }}
+          HEX_VERSION: ${{ inputs.hextunnel_version }}
+          SERVER_REF: ${{ inputs.server_ref }}
+          BOT_REF: ${{ inputs.bot_ref }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$SERVER_REF" =~ ^[A-Za-z0-9._/-]+$ && "$SERVER_REF" != *..* && "$SERVER_REF" != /* ]]
+          [[ "$BOT_REF" =~ ^[A-Za-z0-9._/-]+$ && "$BOT_REF" != *..* && "$BOT_REF" != /* ]]
+          [[ -z "$HEX_VERSION" || "$HEX_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+          case "$ACTION" in
+            publish-hextunnel|release-all)
+              [[ "$HEX_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]] || {
+                echo 'hextunnel_commit es obligatorio para esta operación.' >&2
+                exit 1
+              }
+              ;;
+          esac
+
+      - name: Prepare SSH
+        shell: bash
+        env:
+          VPS_HOST: ${{ secrets.GHOST_VPS_HOST }}
+          VPS_USER: ${{ secrets.GHOST_VPS_USER }}
+          VPS_KEY: ${{ secrets.GHOST_VPS_SSH_PRIVATE_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.GHOST_VPS_KNOWN_HOSTS }}
+        run: |
+          set -Eeuo pipefail
+          [[ -n "$VPS_HOST" && -n "$VPS_USER" && -n "$VPS_KEY" && -n "$VPS_KNOWN_HOSTS" ]] || {
+            echo 'Faltan secretos de producción SSH.' >&2
+            exit 1
+          }
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$VPS_KEY" > "$HOME/.ssh/production-key"
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/production-key" "$HOME/.ssh/known_hosts"
+
+      - name: Execute production operation
+        shell: bash
+        env:
+          VPS_HOST: ${{ secrets.GHOST_VPS_HOST }}
+          VPS_USER: ${{ secrets.GHOST_VPS_USER }}
+          VPS_PORT: ${{ secrets.GHOST_VPS_PORT || '22' }}
+          ACTION: ${{ inputs.action }}
+          HEX_COMMIT: ${{ inputs.hextunnel_commit }}
+          HEX_VERSION: ${{ inputs.hextunnel_version }}
+          SERVER_REF: ${{ inputs.server_ref }}
+          BOT_REF: ${{ inputs.bot_ref }}
+        run: |
+          set -Eeuo pipefail
+          ssh_base=(
+            ssh -p "$VPS_PORT" -i "$HOME/.ssh/production-key"
+            -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+            "$VPS_USER@$VPS_HOST"
+          )
+          scp_base=(
+            scp -P "$VPS_PORT" -i "$HOME/.ssh/production-key"
+            -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+          )
+
+          deploy_server_checkout() {
+            local archive="/tmp/license-server-${GITHUB_RUN_ID}.tar.gz"
+            tar --exclude=.git --exclude=.venv --exclude='__pycache__' -czf "$archive" .
+            "${scp_base[@]}" "$archive" "$VPS_USER@$VPS_HOST:$archive"
+            "${ssh_base[@]}" "set -Eeuo pipefail; work=\$(mktemp -d /tmp/license-deploy.XXXXXX); trap 'rm -rf \"\$work\" $archive' EXIT; tar -xzf $archive -C \"\$work\"; sudo -n bash \"\$work/scripts/install-server.sh\""
+            rm -f "$archive"
+          }
+
+          remote_ghostctl() {
+            local command="$1"
+            "${ssh_base[@]}" "sudo -n ghostctl $command"
+          }
+
+          case "$ACTION" in
+            status)
+              remote_ghostctl status
+              ;;
+            smoke)
+              remote_ghostctl smoke
+              ;;
+            deploy-server)
+              deploy_server_checkout
+              remote_ghostctl status
+              ;;
+            deploy-bot)
+              remote_ghostctl "deploy-bot '$BOT_REF'"
+              remote_ghostctl status
+              ;;
+            publish-hextunnel)
+              remote_ghostctl "publish-hextunnel '$HEX_COMMIT' '$HEX_VERSION'"
+              remote_ghostctl smoke
+              ;;
+            release-all)
+              deploy_server_checkout
+              remote_ghostctl "publish-hextunnel '$HEX_COMMIT' '$HEX_VERSION'"
+              remote_ghostctl "deploy-bot '$BOT_REF'"
+              remote_ghostctl smoke
+              remote_ghostctl status
+              ;;
+            rollback-server)
+              remote_ghostctl rollback-server
+              remote_ghostctl status
+              ;;
+            *) exit 2 ;;
+          esac
