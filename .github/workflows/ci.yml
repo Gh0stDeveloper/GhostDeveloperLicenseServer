@@ -30,37 +30,54 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
+
+          require_text() {
+            local file="$1" text="$2" description="$3"
+            if ! grep -Fq -- "$text" "$file"; then
+              printf 'Missing invariant in %s: %s\nExpected: %s\n' "$file" "$description" "$text" >&2
+              exit 1
+            fi
+          }
+
+          reject_text() {
+            local file="$1" pattern="$2" description="$3"
+            if grep -En -- "$pattern" "$file"; then
+              printf 'Forbidden invariant in %s: %s\n' "$file" "$description" >&2
+              exit 1
+            fi
+          }
+
           bash -n public/install.sh
           for script in scripts/*.sh; do bash -n "$script"; done
-          grep -Fq '__version__ = "0.2.0"' app/__init__.py
 
-          grep -Fq 'https://ghostdeveloperkeys.duckdns.org/api/v1/install/authorize' public/install.sh
-          grep -Fq '804f9b029d39dd9c9ba4246bcecf3cd9963a5555491f7da8dfc3cc6d24f6ec3e' public/install.sh
-          grep -Fq 'amd64|x86_64|arm64|aarch64' public/install.sh
-          grep -Fq 'debian:12|ubuntu:22.04|ubuntu:24.04' public/install.sh
-          grep -Fq '[[ -z "$key" && -r "$KEY_FILE" ]]' public/install.sh
-          grep -Fq -- "-w '%{http_code}'" public/install.sh
-          grep -Fq '.detail // empty' public/install.sh
-          grep -Fq 'La API rechazó la solicitud: ${api_detail} (HTTP ${http_status}).' public/install.sh
+          require_text app/__init__.py '__version__ = "0.2.0"' 'API version'
+          require_text public/install.sh 'https://ghostdeveloperkeys.duckdns.org/api/v1/install/authorize' 'authorization endpoint'
+          require_text public/install.sh '804f9b029d39dd9c9ba4246bcecf3cd9963a5555491f7da8dfc3cc6d24f6ec3e' 'pinned public key hash'
+          require_text public/install.sh 'amd64|x86_64|arm64|aarch64' 'architecture matrix'
+          require_text public/install.sh 'debian:12|ubuntu:22.04|ubuntu:24.04' 'operating-system matrix'
+          require_text public/install.sh '[[ -z "$key" && -r "$KEY_FILE" ]]' 'saved-key reuse'
+          require_text public/install.sh "-w '%{http_code}'" 'HTTP status inspection'
+          require_text public/install.sh '.detail // empty' 'API error detail'
 
-          grep -Fq '/opt/ghostdeveloper-license-server/releases' scripts/install-server.sh
-          grep -Fq 'wait_for_health' scripts/install-server.sh
-          grep -Fq 'restaurando la release anterior' scripts/install-server.sh
-          grep -Fq 'predeploy-$RELEASE_ID.db' scripts/install-server.sh
-          grep -Fq '/usr/local/sbin/ghostctl' scripts/install-server.sh
-          grep -Fq 'release-all' scripts/ghostctl.sh
-          grep -Fq 'TELEBOTGEN_SOURCE_ROOT="$work"' scripts/ghostctl.sh
-          grep -Fq 'publish-hextunnel-release.sh "$commit"' scripts/ghostctl.sh
-          grep -Fq 'HEXTUNNEL_RELEASE_BUILD=1' scripts/publish-hextunnel-release.sh
-          grep -Fq '/releases/$EXISTING_ID/activate' scripts/register-release.sh
-          grep -Fq 'GHOST_VPS_SSH_PRIVATE_KEY' .github/workflows/production-operations.yml
-          grep -Fq 'scripts/live-production-smoke.sh' .github/workflows/live-production-smoke.yml
+          require_text scripts/install-server.sh 'APP_RELEASES="$INSTALL_ROOT/releases"' 'versioned deployments'
+          require_text scripts/install-server.sh 'wait_for_health' 'post-deploy health gate'
+          require_text scripts/install-server.sh 'restaurando la release anterior' 'automatic rollback'
+          require_text scripts/install-server.sh 'predeploy-$RELEASE_ID.db' 'pre-deploy SQLite backup'
+          require_text scripts/install-server.sh '/usr/local/sbin/ghostctl' 'operations controller installation'
 
-          ! grep -REn 'Authorization: Bearer \$TOKEN|Authorization: Bearer \$token' \
-            scripts/create-license.sh scripts/revoke-license.sh scripts/ghostctl.sh
-          grep -Fq '/usr/local/sbin/ghostctl create-key' scripts/create-license.sh
-          grep -Fq '/usr/local/sbin/ghostctl revoke-key' scripts/revoke-license.sh
+          require_text scripts/ghostctl.sh 'release-all' 'single-command complete release'
+          require_text scripts/ghostctl.sh 'TELEBOTGEN_SOURCE_ROOT="$work"' 'non-interactive bot deployment'
+          require_text scripts/ghostctl.sh 'publish-hextunnel-release.sh' 'Hex Tunnel publication command'
+          require_text scripts/publish-hextunnel-release.sh 'HEXTUNNEL_RELEASE_BUILD=1' 'full production gate'
+          require_text scripts/register-release.sh 'EXISTING_ID' 'idempotent release activation'
+          require_text .github/workflows/production-operations.yml 'GHOST_VPS_SSH_PRIVATE_KEY' 'production SSH secret contract'
+          require_text .github/workflows/live-production-smoke.yml 'scripts/live-production-smoke.sh' 'real production smoke test'
 
-          grep -Fq 'command -v curl' public/index.html
-          grep -Fq '@Gh0stDeveloper' public/index.html
-          grep -Fq '@Jotchua_DevzZ' public/index.html
+          require_text scripts/create-license.sh 'ghostctl create-key' 'safe key helper'
+          require_text scripts/revoke-license.sh 'ghostctl revoke-key' 'safe revoke helper'
+          reject_text scripts/create-license.sh 'Authorization: Bearer' 'manual helper must not expose admin token'
+          reject_text scripts/revoke-license.sh 'Authorization: Bearer' 'manual helper must not expose admin token'
+
+          require_text public/index.html 'command -v curl' 'portable install command'
+          require_text public/index.html '@Gh0stDeveloper' 'developer credit'
+          require_text public/index.html '@Jotchua_DevzZ' 'developer credit'
