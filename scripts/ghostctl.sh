@@ -11,7 +11,6 @@ BOT_REF="${GHOSTCTL_BOT_REF:-feat/hextunnel-license-integration}"
 HEX_REPOSITORY="${GHOSTCTL_HEX_REPOSITORY:-Gh0stDeveloper/Porno-OS}"
 GITHUB_TOKEN_FILE="${GHOSTCTL_GITHUB_TOKEN_FILE:-/etc/ghostdeveloper-license/secrets/github-token}"
 LOCK_FILE=/run/lock/ghostdeveloper-operations.lock
-LOG_DIR=/var/log/ghostdeveloper-operations
 
 log() { printf '[ghostctl] %s\n' "$*"; }
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
@@ -19,8 +18,6 @@ require_root() { [[ ${EUID:-$(id -u)} -eq 0 ]] || fail 'ejecuta ghostctl mediant
 
 usage() {
   cat <<'EOF'
-Ghost Developer Operations
-
 Uso:
   ghostctl status
   ghostctl smoke
@@ -34,13 +31,11 @@ Uso:
   ghostctl deploy-bot [ref]
   ghostctl publish-hextunnel <commit_sha> [version]
   ghostctl release-all <commit_sha> [version] [server_ref] [bot_ref]
-
-Sin argumentos abre un menú interactivo.
 EOF
 }
 
-admin_curl() {
-  local method="$1" path="$2" payload="${3:-}" token config status body
+api_request() {
+  local method="$1" path="$2" payload="${3:-}" token config body status
   [[ -s "$ADMIN_TOKEN_FILE" ]] || fail "falta $ADMIN_TOKEN_FILE"
   token="$(tr -d '\r\n' < "$ADMIN_TOKEN_FILE")"
   config="$(mktemp /tmp/ghostctl-curl.XXXXXX)"
@@ -49,15 +44,16 @@ admin_curl() {
   chmod 600 "$config" "$body"
   if [[ "$method" == GET ]]; then
     status="$(curl -sS --connect-timeout 3 --max-time 30 --config "$config" \
-      -o "$body" -w '%{http_code}' "$API_BASE$path")"
+      -o "$body" -w '%{http_code}' "$API_BASE$path")" || status=000
   else
     status="$(curl -sS --connect-timeout 3 --max-time 60 --config "$config" \
       -H 'Content-Type: application/json' --data-binary "$payload" -X "$method" \
-      -o "$body" -w '%{http_code}' "$API_BASE$path")"
+      -o "$body" -w '%{http_code}' "$API_BASE$path")" || status=000
   fi
   rm -f "$config"
   if [[ ! "$status" =~ ^2[0-9]{2}$ ]]; then
-    printf 'API HTTP %s: %s\n' "$status" "$(jq -r '.detail // .' "$body" 2>/dev/null || cat "$body")" >&2
+    printf 'API HTTP %s: %s\n' "$status" \
+      "$(jq -r '.detail // .' "$body" 2>/dev/null || cat "$body")" >&2
     rm -f "$body"
     return 1
   fi
@@ -66,103 +62,90 @@ admin_curl() {
 }
 
 api_online() {
-  curl -fsS --connect-timeout 3 --max-time 8 "$API_BASE/health" | jq -e '.status == "online"' >/dev/null
+  curl -fsS --connect-timeout 3 --max-time 8 "$API_BASE/health" \
+    | jq -e '.status == "online"' >/dev/null
 }
 
 status_command() {
   printf '=== Servicios ===\n'
-  systemctl is-active ghost-license-api.service || true
-  systemctl is-active ghost-license-backup.timer || true
-  systemctl is-active telebotgen.service || true
-  printf '\n=== API local ===\n'
-  curl -fsS "$API_BASE/health" | jq . || true
-  printf '\n=== Release Hex Tunnel activa ===\n'
-  admin_curl GET '/api/v1/admin/releases?product=hextunnel' \
+  for service in ghost-license-api.service ghost-license-backup.timer telebotgen.service; do
+    printf '%-36s %s\n' "$service" "$(systemctl is-active "$service" 2>/dev/null || true)"
+  done
+  printf '\n=== API ===\n'
+  curl -fsS "$API_BASE/health" | jq .
+  printf '\n=== Hex Tunnel activo ===\n'
+  api_request GET '/api/v1/admin/releases?product=hextunnel' \
     | jq '[.[] | select(.active == true)] | first // {active:false}'
-  printf '\n=== Enlaces actuales ===\n'
-  readlink -f /opt/ghostdeveloper-license-server/current 2>/dev/null || true
-  readlink -f /opt/ghostdeveloper-license-server/previous 2>/dev/null || true
-  printf '\n=== Espacio ===\n'
+  printf '\n=== Despliegues ===\n'
+  printf 'Actual:  %s\n' "$(readlink -f /opt/ghostdeveloper-license-server/current 2>/dev/null || printf desconocido)"
+  printf 'Anterior: %s\n' "$(readlink -f /opt/ghostdeveloper-license-server/previous 2>/dev/null || printf ninguna)"
   df -h / /var/lib/ghostdeveloper-license 2>/dev/null || df -h /
 }
 
 smoke_command() {
-  local failed=0
-  printf 'API local: '
-  if api_online; then echo OK; else echo ERROR; failed=1; fi
+  local failed=0 url
   for url in \
+    "$API_BASE/health" \
     https://ghostdeveloperkeys.duckdns.org/health \
     https://ghostdeveloperdownloads.duckdns.org/health; do
     printf '%s: ' "$url"
-    if curl -fsS --connect-timeout 5 --max-time 15 "$url" | jq -e '.status == "online"' >/dev/null; then
+    if curl -fsS --connect-timeout 5 --max-time 15 "$url" \
+      | jq -e '.status == "online"' >/dev/null; then
       echo OK
     else
       echo ERROR
       failed=1
     fi
   done
-  printf 'Página pública: '
-  if curl -fsSI --connect-timeout 5 --max-time 15 https://ghostdeveloper.duckdns.org/ | head -n1 | grep -Eq ' 2[0-9]{2} '; then
-    echo OK
-  else
-    echo ERROR
-    failed=1
-  fi
-  printf 'Bootstrap público: '
-  if curl -fsS --connect-timeout 5 --max-time 20 https://ghostdeveloper.duckdns.org/install.sh \
-    | grep -Fq 'amd64|x86_64|arm64|aarch64'; then
-    echo OK
-  else
-    echo ERROR
-    failed=1
-  fi
+  printf 'Página: '
+  curl -fsSI --connect-timeout 5 --max-time 15 https://ghostdeveloper.duckdns.org/ \
+    | head -n1 | grep -Eq ' 2[0-9]{2} ' && echo OK || { echo ERROR; failed=1; }
+  printf 'Bootstrap AMD64/ARM64: '
+  curl -fsS --connect-timeout 5 --max-time 20 https://ghostdeveloper.duckdns.org/install.sh \
+    | grep -Fq 'amd64|x86_64|arm64|aarch64' \
+    && echo OK || { echo ERROR; failed=1; }
   return "$failed"
 }
 
 releases_command() {
-  local product="${1:-hextunnel}"
-  admin_curl GET "/api/v1/admin/releases?product=$product" \
+  api_request GET "/api/v1/admin/releases?product=${1:-hextunnel}" \
     | jq -r '.[] | "\(.version)\t\(if .active then "ACTIVE" else "inactive" end)\t\(.sha256)\t\(.relative_path)"'
 }
 
 activate_command() {
-  local product="${1:-}" version="${2:-}" data release_id payload
-  [[ -n "$product" && -n "$version" ]] || fail 'uso: ghostctl activate <producto> <version>'
-  data="$(admin_curl GET "/api/v1/admin/releases?product=$product")"
+  local product="$1" version="$2" data release_id payload
+  data="$(api_request GET "/api/v1/admin/releases?product=$product")"
   release_id="$(jq -r --arg version "$version" '.[] | select(.version == $version) | .id' <<< "$data" | head -n1)"
-  [[ -n "$release_id" && "$release_id" != null ]] || fail "no existe $product $version"
+  [[ "$release_id" =~ ^[0-9a-fA-F-]{36}$ ]] || fail "no existe $product $version"
   payload="$(jq -n --arg reason 'Activada mediante ghostctl' '{reason:$reason}')"
-  admin_curl POST "/api/v1/admin/releases/$release_id/activate" "$payload" | jq .
+  api_request POST "/api/v1/admin/releases/$release_id/activate" "$payload" | jq .
 }
 
 create_key_command() {
   local minutes="${1:-240}" telegram_id="${2:-}" username="${3:-}" payload
   [[ "$minutes" =~ ^[0-9]+$ && "$minutes" -ge 1 && "$minutes" -le 525600 ]] \
-    || fail 'los minutos deben estar entre 1 y 525600.'
+    || fail 'duración inválida.'
   [[ -z "$telegram_id" || "$telegram_id" =~ ^[0-9]+$ ]] || fail 'telegram_id inválido.'
-  payload="$(jq -n \
-    --arg telegram_id "$telegram_id" \
-    --arg username "$username" \
+  payload="$(jq -n --arg telegram_id "$telegram_id" --arg username "$username" \
     --argjson minutes "$minutes" \
     '{product:"hextunnel",owner_telegram_id:(if ($telegram_id|length)>0 then $telegram_id else null end),owner_username:(if ($username|length)>0 then $username else null end),expires_in_minutes:$minutes,activation_limit:1,metadata:{channel:"ghostctl"}}')"
-  admin_curl POST '/api/v1/admin/licenses' "$payload" | jq .
+  api_request POST '/api/v1/admin/licenses' "$payload" | jq .
 }
 
 license_command() {
-  local license_id="${1:-}"
-  [[ "$license_id" =~ ^[0-9a-fA-F-]{36}$ ]] || fail 'license_id inválido.'
-  admin_curl GET "/api/v1/admin/licenses/$license_id" | jq .
+  [[ "${1:-}" =~ ^[0-9a-fA-F-]{36}$ ]] || fail 'license_id inválido.'
+  api_request GET "/api/v1/admin/licenses/$1" | jq .
 }
 
 revoke_key_command() {
   local license_id="${1:-}" reason="${2:-Revocada mediante ghostctl}" payload
   [[ "$license_id" =~ ^[0-9a-fA-F-]{36}$ ]] || fail 'license_id inválido.'
   payload="$(jq -n --arg reason "$reason" '{reason:$reason}')"
-  admin_curl POST "/api/v1/admin/licenses/$license_id/revoke" "$payload" | jq .
+  api_request POST "/api/v1/admin/licenses/$license_id/revoke" "$payload" | jq .
 }
 
 github_download() {
-  local repository="$1" ref="$2" destination="$3" url token config
+  local repository="$1" ref="$2" destination="$3" url token config=""
   url="https://api.github.com/repos/${repository}/tarball/${ref}"
   if [[ -s "$GITHUB_TOKEN_FILE" ]]; then
     token="$(tr -d '\r\n' < "$GITHUB_TOKEN_FILE")"
@@ -190,7 +173,7 @@ extract_repository() {
 deploy_server_command() {
   local ref="${1:-$SERVER_REF}" work
   work="$(mktemp -d /tmp/ghostctl-server.XXXXXX)"
-  log "Descargando $SERVER_REPOSITORY@$ref"
+  log "Desplegando $SERVER_REPOSITORY@$ref"
   extract_repository "$SERVER_REPOSITORY" "$ref" "$work"
   bash -n "$work/scripts/install-server.sh"
   bash "$work/scripts/install-server.sh"
@@ -200,18 +183,21 @@ deploy_server_command() {
 deploy_bot_command() {
   local ref="${1:-$BOT_REF}" work
   work="$(mktemp -d /tmp/ghostctl-bot.XXXXXX)"
-  log "Descargando $BOT_REPOSITORY@$ref"
+  log "Desplegando $BOT_REPOSITORY@$ref"
   extract_repository "$BOT_REPOSITORY" "$ref" "$work"
-  TELEBOTGEN_REPOSITORY="$BOT_REPOSITORY" TELEBOTGEN_REF="$ref" \
-    bash "$work/confbot.sh" install
+  [[ -f "$work/deploy.sh" ]] || fail 'el paquete de TeleBotGen no contiene deploy.sh.'
+  TELEBOTGEN_SOURCE_ROOT="$work" \
+  TELEBOTGEN_REPOSITORY="$BOT_REPOSITORY" \
+  TELEBOTGEN_REF="$ref" \
+    bash "$work/deploy.sh"
   systemctl is-active --quiet telebotgen.service \
     || fail 'TeleBotGen no quedó activo después del despliegue.'
   rm -rf "$work"
 }
 
 publish_hextunnel_command() {
-  local commit="${1:-}" version="${2:-}"
-  [[ "$commit" =~ ^[0-9a-fA-F]{40}$ ]] || fail 'indica un commit SHA completo de Hex Tunnel.'
+  local commit="$1" version="${2:-}"
+  [[ "$commit" =~ ^[0-9a-fA-F]{40}$ ]] || fail 'commit Hex Tunnel inválido.'
   export HEXTUNNEL_SOURCE_REPOSITORY="https://github.com/${HEX_REPOSITORY}.git"
   if [[ -n "$version" ]]; then
     bash /opt/ghostdeveloper-license-server/current/scripts/publish-hextunnel-release.sh "$commit" "$version"
@@ -224,20 +210,18 @@ rollback_server_command() {
   local current previous
   current="$(readlink -f /opt/ghostdeveloper-license-server/current 2>/dev/null || true)"
   previous="$(readlink -f /opt/ghostdeveloper-license-server/previous 2>/dev/null || true)"
-  [[ -n "$previous" && -d "$previous" ]] || fail 'no existe una release anterior disponible.'
+  [[ -d "$previous" ]] || fail 'no existe una release anterior.'
   ln -sfn "$previous" /opt/ghostdeveloper-license-server/current.next
   mv -Tf /opt/ghostdeveloper-license-server/current.next /opt/ghostdeveloper-license-server/current
   ln -sfn "$current" /opt/ghostdeveloper-license-server/previous.next
   mv -Tf /opt/ghostdeveloper-license-server/previous.next /opt/ghostdeveloper-license-server/previous
   systemctl daemon-reload
   systemctl restart ghost-license-api.service
-  api_online || fail 'la release anterior tampoco superó el health check.'
-  log "Rollback completado: $previous"
+  api_online || fail 'la release restaurada no superó el health check.'
 }
 
 release_all_command() {
-  local commit="${1:-}" version="${2:-}" server_ref="${3:-$SERVER_REF}" bot_ref="${4:-$BOT_REF}"
-  [[ "$commit" =~ ^[0-9a-fA-F]{40}$ ]] || fail 'indica el commit SHA completo de Hex Tunnel.'
+  local commit="$1" version="${2:-}" server_ref="${3:-$SERVER_REF}" bot_ref="${4:-$BOT_REF}"
   deploy_server_command "$server_ref"
   publish_hextunnel_command "$commit" "$version"
   deploy_bot_command "$bot_ref"
@@ -245,25 +229,20 @@ release_all_command() {
   status_command
 }
 
-interactive_menu() {
-  local option value second
+menu_command() {
+  local option value version
   while true; do
     clear || true
     cat <<'EOF'
 ============================================================
                GHOST DEVELOPER OPERATIONS
 ============================================================
-  1) Estado completo
-  2) Prueba rápida
-  3) Ver releases Hex Tunnel
-  4) Activar una versión existente
-  5) Generar key manual
-  6) Actualizar servidor de licencias
-  7) Actualizar TeleBotGen
-  8) Publicar Hex Tunnel
-  9) Actualizar todo
- 10) Rollback del servidor
-  0) Salir
+ 1) Estado          6) Actualizar servidor
+ 2) Smoke test      7) Actualizar TeleBotGen
+ 3) Releases        8) Publicar Hex Tunnel
+ 4) Activar versión 9) Actualizar todo
+ 5) Generar key    10) Rollback servidor
+ 0) Salir
 ============================================================
 EOF
     read -r -p 'Opción: ' option
@@ -272,24 +251,23 @@ EOF
       2) smoke_command || true ;;
       3) releases_command hextunnel ;;
       4) read -r -p 'Versión: ' value; activate_command hextunnel "$value" ;;
-      5) read -r -p 'Minutos: ' value; create_key_command "${value:-240}" ;;
-      6) read -r -p "Ref [$SERVER_REF]: " value; deploy_server_command "${value:-$SERVER_REF}" ;;
-      7) read -r -p "Ref [$BOT_REF]: " value; deploy_bot_command "${value:-$BOT_REF}" ;;
-      8) read -r -p 'Commit Hex Tunnel: ' value; read -r -p 'Versión (vacío=automática): ' second; publish_hextunnel_command "$value" "$second" ;;
-      9) read -r -p 'Commit Hex Tunnel: ' value; read -r -p 'Versión (vacío=automática): ' second; release_all_command "$value" "$second" ;;
+      5) read -r -p 'Minutos [240]: ' value; create_key_command "${value:-240}" ;;
+      6) deploy_server_command "$SERVER_REF" ;;
+      7) deploy_bot_command "$BOT_REF" ;;
+      8) read -r -p 'Commit Hex Tunnel: ' value; read -r -p 'Versión opcional: ' version; publish_hextunnel_command "$value" "$version" ;;
+      9) read -r -p 'Commit Hex Tunnel: ' value; read -r -p 'Versión opcional: ' version; release_all_command "$value" "$version" ;;
       10) rollback_server_command ;;
       0) return ;;
       *) echo 'Opción inválida.' ;;
     esac
-    read -r -p 'Presiona Enter para continuar...' _
+    read -r -p 'Enter para continuar...' _
   done
 }
 
 main() {
   require_root
-  install -d -m 750 "$LOG_DIR"
   exec 9>"$LOCK_FILE"
-  flock -n 9 || fail 'ya existe otra operación de despliegue o publicación en curso.'
+  flock -n 9 || fail 'ya existe otra operación en curso.'
   case "${1:-menu}" in
     status) status_command ;;
     smoke) smoke_command ;;
@@ -303,7 +281,7 @@ main() {
     deploy-bot) deploy_bot_command "${2:-$BOT_REF}" ;;
     publish-hextunnel) publish_hextunnel_command "${2:-}" "${3:-}" ;;
     release-all) release_all_command "${2:-}" "${3:-}" "${4:-$SERVER_REF}" "${5:-$BOT_REF}" ;;
-    menu) interactive_menu ;;
+    menu) menu_command ;;
     help|--help|-h) usage ;;
     *) usage; exit 2 ;;
   esac
