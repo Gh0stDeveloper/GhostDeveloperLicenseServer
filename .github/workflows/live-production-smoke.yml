@@ -10,9 +10,16 @@ on:
       - scripts/live-production-smoke.sh
       - scripts/ghostctl.sh
       - .github/workflows/live-production-smoke.yml
+  pull_request:
+    paths:
+      - app/**
+      - public/install.sh
+      - scripts/live-production-smoke.sh
+      - scripts/ghostctl.sh
+      - .github/workflows/live-production-smoke.yml
 
 concurrency:
-  group: ghostdeveloper-live-production
+  group: ghostdeveloper-live-production-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 
 permissions:
