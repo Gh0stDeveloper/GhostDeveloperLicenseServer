@@ -213,10 +213,16 @@ def active_release(session: Session, product: str) -> Release:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="No existe una versión publicada para este producto",
         )
-    if not Path(release.file_path).is_file():
+    package = Path(release.file_path)
+    if not package.is_file():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="El paquete publicado no está disponible en el servidor",
+        )
+    if sha256_file(package) != release.sha256:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="La integridad del paquete publicado no coincide con la release registrada",
         )
     return release
 
