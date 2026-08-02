@@ -141,6 +141,7 @@ main(){
   mkdir -p "$extract_root"
 
   key="$(read_key)"
+  unset HEXTUNNEL_LICENSE_KEY
   ip="$(curl -4fsS --retry 2 --connect-timeout 8 --max-time 15 https://api.ipify.org)" \
     || fail "No se pudo detectar la IP pública."
   nonce="$(openssl rand -hex 24)"
