@@ -1,0 +1,81 @@
+name: Live production smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [agent/public-bootstrap-web]
+    paths:
+      - app/**
+      - public/install.sh
+      - scripts/live-production-smoke.sh
+      - scripts/ghostctl.sh
+      - .github/workflows/live-production-smoke.yml
+
+concurrency:
+  group: ghostdeveloper-live-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  live-smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install smoke dependencies
+        run: sudo apt-get update -y && sudo apt-get install -y jq openssl openssh-client
+
+      - name: Prepare optional production SSH
+        id: ssh
+        shell: bash
+        env:
+          VPS_HOST: ${{ secrets.GHOST_VPS_HOST }}
+          VPS_USER: ${{ secrets.GHOST_VPS_USER }}
+          VPS_KEY: ${{ secrets.GHOST_VPS_SSH_PRIVATE_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.GHOST_VPS_KNOWN_HOSTS }}
+        run: |
+          set -Eeuo pipefail
+          install -d -m 700 "$HOME/.ssh"
+          if [[ -n "$VPS_HOST" && -n "$VPS_USER" && -n "$VPS_KEY" && -n "$VPS_KNOWN_HOSTS" ]]; then
+            printf '%s\n' "$VPS_KEY" > "$HOME/.ssh/production-key"
+            printf '%s\n' "$VPS_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+            chmod 600 "$HOME/.ssh/production-key" "$HOME/.ssh/known_hosts"
+            echo 'enabled=true' >> "$GITHUB_OUTPUT"
+          else
+            : > "$HOME/.ssh/production-key"
+            : > "$HOME/.ssh/known_hosts"
+            chmod 600 "$HOME/.ssh/production-key" "$HOME/.ssh/known_hosts"
+            echo 'enabled=false' >> "$GITHUB_OUTPUT"
+            echo '::warning::SSH production secrets are not configured; only public tests will run.'
+          fi
+
+      - name: Run real public and licensed smoke test
+        shell: bash
+        env:
+          GHOST_VPS_HOST: ${{ secrets.GHOST_VPS_HOST }}
+          GHOST_VPS_USER: ${{ secrets.GHOST_VPS_USER }}
+          GHOST_VPS_PORT: ${{ secrets.GHOST_VPS_PORT || '22' }}
+          GHOST_VPS_SSH_KEY_FILE: ${{ github.workspace }}/../.ssh-placeholder
+          GHOST_VPS_KNOWN_HOSTS_FILE: ${{ github.workspace }}/../.known-hosts-placeholder
+          GHOST_SMOKE_REPORT: /tmp/ghostdeveloper-live-smoke.txt
+        run: |
+          set -Eeuo pipefail
+          if [[ '${{ steps.ssh.outputs.enabled }}' == true ]]; then
+            export GHOST_VPS_SSH_KEY_FILE="$HOME/.ssh/production-key"
+            export GHOST_VPS_KNOWN_HOSTS_FILE="$HOME/.ssh/known_hosts"
+          else
+            unset GHOST_VPS_HOST GHOST_VPS_USER
+          fi
+          bash scripts/live-production-smoke.sh
+
+      - name: Upload sanitized smoke report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-production-smoke-${{ github.run_id }}
+          path: /tmp/ghostdeveloper-live-smoke.txt
+          if-no-files-found: warn
+          retention-days: 7
