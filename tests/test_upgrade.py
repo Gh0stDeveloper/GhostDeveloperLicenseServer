@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import time
 
+from sqlalchemy import update
+
+from app.models import License
+
 
 def admin_headers(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def test_upgrade_reuses_bound_activation(test_environment: dict) -> None:
+def test_upgrade_and_lease_survive_key_expiry(test_environment: dict) -> None:
     env = test_environment
     release = env["client"].post(
         "/api/v1/admin/releases",
@@ -28,6 +32,8 @@ def test_upgrade_reuses_bound_activation(test_environment: dict) -> None:
         json={
             "product": "hextunnel",
             "owner_telegram_id": "123456789",
+            "issued_by_telegram_id": "123456789",
+            "reseller_name": "Mi Reseller",
             "expires_in_minutes": 240,
             "activation_limit": 1,
         },
@@ -47,11 +53,21 @@ def test_upgrade_reuses_bound_activation(test_environment: dict) -> None:
         },
     )
     assert install.status_code == 200, install.text
+    activation_token = install.json()["activation_token"]
+
+    database = env["client"].app.state.database
+    with database.session_factory() as session:
+        session.execute(
+            update(License)
+            .where(License.id == created.json()["id"])
+            .values(expires_at=int(time.time()) - 60)
+        )
+        session.commit()
 
     upgrade = env["client"].post(
         "/api/v1/install/authorize",
         json={
-            "key": key,
+            "activation_token": activation_token,
             "ip": "203.0.113.10",
             "nonce": "2" * 48,
             "timestamp": int(time.time()),
@@ -64,11 +80,24 @@ def test_upgrade_reuses_bound_activation(test_environment: dict) -> None:
     assert payload["status"] == "valid"
     assert payload["subject"] == "203.0.113.10"
     assert payload["version"] == "1.0.1"
-    assert payload["activation_token"] != install.json()["activation_token"]
+    assert payload["installation_permanent"] is True
+    assert payload["reseller_name"] == "Mi Reseller"
+    assert payload["activation_token"] != activation_token
+
+    lease = env["client"].post(
+        "/api/v1/licenses/lease",
+        json={
+            "activation_token": payload["activation_token"],
+            "ip": "203.0.113.10",
+            "product": "hextunnel",
+        },
+    )
+    assert lease.status_code == 200, lease.text
 
     listed = env["client"].get(
-        "/api/v1/admin/licenses",
+        f"/api/v1/admin/licenses/{created.json()['id']}",
         headers=admin_headers(env["admin_token"]),
     )
     assert listed.status_code == 200
-    assert listed.json()["items"][0]["activation_count"] == 1
+    assert listed.json()["activation_count"] == 1
+    assert listed.json()["status"] == "activated"
