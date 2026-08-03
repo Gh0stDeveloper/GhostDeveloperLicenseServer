@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+import unicodedata
 from datetime import datetime
 from typing import Any, Literal
 
@@ -8,6 +10,23 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 PRODUCT_PATTERN = r"^[a-z0-9][a-z0-9._-]{1,63}$"
 VERSION_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$"
+LICENSE_KEY_PATTERN = re.compile(r"^HT-(?:[0-9A-F]{4}-){5}[0-9A-F]{4}$")
+LICENSE_KEY_DASH_TRANSLATION = str.maketrans(
+    {
+        "\u2010": "-",
+        "\u2011": "-",
+        "\u2012": "-",
+        "\u2013": "-",
+        "\u2014": "-",
+        "\u2015": "-",
+        "\u2212": "-",
+        "\ufe63": "-",
+        "\uff0d": "-",
+    }
+)
+LICENSE_KEY_INVISIBLE_CHARACTERS = frozenset(
+    {"\u200b", "\u200c", "\u200d", "\u2060", "\ufeff"}
+)
 
 
 def normalize_public_reseller_name(value: str) -> str:
@@ -18,6 +37,22 @@ def normalize_public_reseller_name(value: str) -> str:
         raise ValueError("El reseller debe contener entre 2 y 64 caracteres")
     if any(character in "<>&" for character in normalized):
         raise ValueError("El reseller contiene caracteres no permitidos")
+    return normalized
+
+
+def normalize_license_key(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = unicodedata.normalize("NFKC", value)
+    normalized = normalized.translate(LICENSE_KEY_DASH_TRANSLATION)
+    normalized = "".join(
+        character
+        for character in normalized
+        if character not in LICENSE_KEY_INVISIBLE_CHARACTERS
+    )
+    normalized = normalized.strip().upper()
+    if not LICENSE_KEY_PATTERN.fullmatch(normalized):
+        raise ValueError("La key debe usar el formato HT-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX")
     return normalized
 
 
@@ -136,6 +171,11 @@ class AuthorizeRequest(BaseModel):
     timestamp: int
     product: str = Field(default="hextunnel", pattern=PRODUCT_PATTERN)
     action: Literal["install", "upgrade"] = "install"
+
+    @field_validator("key", mode="before")
+    @classmethod
+    def normalize_key(cls, value: str | None) -> str | None:
+        return normalize_license_key(value)
 
     @model_validator(mode="after")
     def validate_credential(self) -> "AuthorizeRequest":
