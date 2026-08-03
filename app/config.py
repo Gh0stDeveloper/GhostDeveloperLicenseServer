@@ -80,7 +80,7 @@ class Settings:
             ),
             installer_link_base_url=os.getenv(
                 "GHOST_LICENSE_INSTALLER_LINK_BASE_URL",
-                "https://ghostdeveloperkeys.duckdns.org/i",
+                "https://ghostdeveloper.duckdns.org/i",
             ).rstrip("/"),
             max_clock_skew_seconds=int(
                 os.getenv("GHOST_LICENSE_MAX_CLOCK_SKEW_SECONDS", "300")
