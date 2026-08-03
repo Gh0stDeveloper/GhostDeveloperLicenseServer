@@ -15,9 +15,16 @@ class License(Base):
     product: Mapped[str] = mapped_column(String(64), index=True)
     owner_telegram_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     owner_username: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    issued_by_telegram_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    source_chat_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    notification_chat_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    reseller_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     status: Mapped[str] = mapped_column(String(24), default="active", index=True)
     created_at: Mapped[int] = mapped_column(Integer)
+    # expires_at is the redemption deadline of the key. It does not terminate an
+    # activation that was completed before this timestamp.
     expires_at: Mapped[int] = mapped_column(Integer, index=True)
+    key_redeemed_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
     activation_limit: Mapped[int] = mapped_column(Integer, default=1)
     activation_count: Mapped[int] = mapped_column(Integer, default=0)
     bound_ip: Mapped[str | None] = mapped_column(String(45), nullable=True)
@@ -49,6 +56,38 @@ class Activation(Base):
     revoked_at: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     license: Mapped[License] = relationship(back_populates="activations")
+
+
+class ActivationEvent(Base):
+    __tablename__ = "activation_events"
+    __table_args__ = (
+        UniqueConstraint("activation_id", name="uq_activation_event_activation"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    license_id: Mapped[str] = mapped_column(
+        ForeignKey("licenses.id", ondelete="CASCADE"), index=True
+    )
+    activation_id: Mapped[str] = mapped_column(
+        ForeignKey("activations.id", ondelete="CASCADE"), index=True
+    )
+    subject_ip: Mapped[str] = mapped_column(String(45), index=True)
+    created_at: Mapped[int] = mapped_column(Integer, index=True)
+    notification_chat_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    source_chat_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    issued_by_telegram_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    reseller_name: Mapped[str] = mapped_column(String(128), default="Hex Tunnel Bot Gen")
+    delivered_at: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+
+
+class InstallerLink(Base):
+    __tablename__ = "installer_links"
+
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    created_at: Mapped[int] = mapped_column(Integer)
+    expires_at: Mapped[int] = mapped_column(Integer, index=True)
+    created_by_telegram_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    source_chat_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
 
 class Release(Base):
@@ -100,3 +139,4 @@ class AuditEvent(Base):
 
 
 Index("ix_download_token_validity", DownloadToken.expires_at, DownloadToken.consumed_at)
+Index("ix_activation_event_pending", ActivationEvent.delivered_at, ActivationEvent.created_at)
