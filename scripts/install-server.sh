@@ -37,7 +37,9 @@ wait_for_health() {
 }
 
 atomic_link() {
-  local target="$1" link="$2" next="${link}.next"
+  local target="$1"
+  local link="$2"
+  local next="${link}.next"
   rm -f "$next"
   ln -s "$target" "$next"
   mv -Tf "$next" "$link"
