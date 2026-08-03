@@ -35,6 +35,10 @@ def create_license(env: dict, **overrides) -> dict:
         "product": "hextunnel",
         "owner_telegram_id": "123456789",
         "owner_username": "cliente",
+        "issued_by_telegram_id": "987654321",
+        "source_chat_id": "-1001234567890",
+        "notification_chat_id": "-1001234567890",
+        "reseller_name": "Nexora Reseller",
         "expires_in_minutes": 240,
         "activation_limit": 1,
     }
@@ -69,6 +73,7 @@ def test_health_and_admin_authentication(test_environment: dict) -> None:
     health = client.get("/health")
     assert health.status_code == 200
     assert health.json()["status"] == "online"
+    assert health.json()["version"] == "0.3.0"
 
     unauthorized = client.get("/api/v1/admin/licenses")
     assert unauthorized.status_code == 401
@@ -81,21 +86,26 @@ def test_health_and_admin_authentication(test_environment: dict) -> None:
     assert authorized.json()["total"] == 0
 
 
-def test_license_authorization_signature_download_and_lease(test_environment: dict) -> None:
+def test_license_authorization_signature_download_lease_and_event(test_environment: dict) -> None:
     env = test_environment
     release = register_release(env)
     license_data = create_license(env)
     assert license_data["key"].startswith("HT-")
-    assert release["sha256"]
+    assert license_data["reseller_name"] == "Nexora Reseller"
 
     authorization = authorize(env, license_data["key"])
     assert authorization["status"] == "valid"
     assert authorization["subject"] == "203.0.113.10"
     assert authorization["package_sha256"] == release["sha256"]
+    assert authorization["installation_permanent"] is True
+    assert authorization["reseller_name"] == "Nexora Reseller"
 
     canonical = canonical_authorization(
         status=authorization["status"],
-        expires_at=authorization["expires_at"].replace("+00:00", "Z"),
+        key_expires_at=authorization["key_expires_at"].replace("+00:00", "Z"),
+        activated_at=authorization["activated_at"].replace("+00:00", "Z"),
+        installation_permanent=authorization["installation_permanent"],
+        reseller_name=authorization["reseller_name"],
         download_expires_at=authorization["download_expires_at"].replace("+00:00", "Z"),
         nonce=authorization["nonce"],
         subject=authorization["subject"],
@@ -115,8 +125,24 @@ def test_license_authorization_signature_download_and_lease(test_environment: di
     download = env["client"].get(download_path)
     assert download.status_code == 200
     assert download.content.startswith(b"\x1f\x8b")
-    reused = env["client"].get(download_path)
-    assert reused.status_code == 404
+    assert env["client"].get(download_path).status_code == 404
+
+    events = env["client"].get(
+        "/api/v1/admin/activation-events?pending_only=true",
+        headers=admin_headers(env["admin_token"]),
+    )
+    assert events.status_code == 200, events.text
+    event = events.json()["items"][0]
+    assert event["key_prefix"] == license_data["key_prefix"]
+    assert event["subject_ip"] == "203.0.113.10"
+    assert event["notification_chat_id"] == "-1001234567890"
+    assert event["reseller_name"] == "Nexora Reseller"
+
+    delivered = env["client"].post(
+        f"/api/v1/admin/activation-events/{event['id']}/delivered",
+        headers=admin_headers(env["admin_token"]),
+    )
+    assert delivered.status_code == 200, delivered.text
 
     lease = env["client"].post(
         "/api/v1/licenses/lease",
@@ -143,7 +169,7 @@ def test_license_authorization_signature_download_and_lease(test_environment: di
     )
 
 
-def test_nonce_replay_and_revocation(test_environment: dict) -> None:
+def test_nonce_replay_key_reuse_and_revocation(test_environment: dict) -> None:
     env = test_environment
     register_release(env)
     license_data = create_license(env)
@@ -163,6 +189,20 @@ def test_nonce_replay_and_revocation(test_environment: dict) -> None:
     )
     assert replay.status_code == 409
 
+    reused_key = env["client"].post(
+        "/api/v1/install/authorize",
+        json={
+            "key": license_data["key"],
+            "ip": "198.51.100.25",
+            "nonce": "c" * 48,
+            "timestamp": int(time.time()),
+            "product": "hextunnel",
+            "action": "install",
+        },
+    )
+    assert reused_key.status_code == 403
+    assert reused_key.json()["detail"] == "La key ya fue utilizada"
+
     revoked = env["client"].post(
         f"/api/v1/admin/licenses/{license_data['id']}/revoke",
         headers=admin_headers(env["admin_token"]),
@@ -170,19 +210,6 @@ def test_nonce_replay_and_revocation(test_environment: dict) -> None:
     )
     assert revoked.status_code == 200
     assert revoked.json()["status"] == "revoked"
-
-    denied = env["client"].post(
-        "/api/v1/install/authorize",
-        json={
-            "key": license_data["key"],
-            "ip": "203.0.113.10",
-            "nonce": "c" * 48,
-            "timestamp": int(time.time()),
-            "product": "hextunnel",
-            "action": "install",
-        },
-    )
-    assert denied.status_code == 403
 
 
 def test_rejects_stale_timestamp_and_unsafe_release_path(test_environment: dict) -> None:
@@ -214,7 +241,7 @@ def test_rejects_stale_timestamp_and_unsafe_release_path(test_environment: dict)
     assert stale.status_code == 400
 
 
-def test_reset_activation_allows_reactivation(test_environment: dict) -> None:
+def test_reset_activation_allows_reactivation_before_key_deadline(test_environment: dict) -> None:
     env = test_environment
     register_release(env)
     license_data = create_license(env)
@@ -241,3 +268,22 @@ def test_reset_activation_allows_reactivation(test_environment: dict) -> None:
     )
     assert second.status_code == 200, second.text
     assert second.json()["subject"] == "198.51.100.25"
+
+
+def test_temporary_installer_link_redirects_and_expires(test_environment: dict) -> None:
+    env = test_environment
+    response = env["client"].post(
+        "/api/v1/admin/installer-links",
+        headers=admin_headers(env["admin_token"]),
+        json={
+            "expires_in_minutes": 15,
+            "created_by_telegram_id": "987654321",
+            "source_chat_id": "-1001234567890",
+        },
+    )
+    assert response.status_code == 201, response.text
+    path = urlparse(response.json()["url"]).path
+    redirect = env["client"].get(path, follow_redirects=False)
+    assert redirect.status_code == 307
+    assert redirect.headers["location"] == env["settings"].public_install_url
+    assert redirect.headers["cache-control"] == "no-store, max-age=0"
