@@ -110,7 +110,8 @@ EOF
 }
 
 main(){
-  local action="${1:-install}" key='' activation_credential='' ip nonce timestamp response tmp result
+  local action="${1:-install}" request_action='' key='' activation_credential=''
+  local ip nonce timestamp response tmp result
   local request_file auth_body http_status api_detail
   local status key_expires_at activated_at installation_permanent reseller_name
   local download_expires_at response_nonce subject version download_url package_sha256
@@ -146,26 +147,32 @@ main(){
   extract_root="$tmp/extracted"
   mkdir -p "$extract_root"
 
-  if [[ "$action" == install ]]; then
+  request_action="$action"
+  if [[ "$action" == install && -s "$TOKEN_FILE" ]]; then
+    activation_credential="$(read_activation_token)"
+    request_action=upgrade
+    printf 'Reanudando instalación con la activación existente...\n'
+  elif [[ "$action" == install ]]; then
     key="$(read_install_key)"
   else
     activation_credential="$(read_activation_token)"
   fi
   unset HEXTUNNEL_LICENSE_KEY
+
   ip="$(curl -4fsS --retry 2 --connect-timeout 8 --max-time 15 https://api.ipify.org)" \
     || fail "No se pudo detectar la IP pública."
   nonce="$(openssl rand -hex 24)"
   timestamp="$(date -u +%s)"
-  if [[ "$action" == install ]]; then
+  if [[ "$request_action" == install ]]; then
     jq -n \
-      --arg key "$key" --arg ip "$ip" --arg nonce "$nonce" --arg action "$action" \
+      --arg key "$key" --arg ip "$ip" --arg nonce "$nonce" --arg action "$request_action" \
       --argjson timestamp "$timestamp" \
       '{key:$key,ip:$ip,nonce:$nonce,timestamp:$timestamp,product:"hextunnel",action:$action}' \
       > "$request_file"
   else
     jq -n \
       --arg activation_token "$activation_credential" --arg ip "$ip" \
-      --arg nonce "$nonce" --arg action "$action" --argjson timestamp "$timestamp" \
+      --arg nonce "$nonce" --arg action "$request_action" --argjson timestamp "$timestamp" \
       '{activation_token:$activation_token,ip:$ip,nonce:$nonce,timestamp:$timestamp,product:"hextunnel",action:$action}' \
       > "$request_file"
   fi
