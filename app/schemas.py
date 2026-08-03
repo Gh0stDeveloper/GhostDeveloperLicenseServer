@@ -10,6 +10,17 @@ PRODUCT_PATTERN = r"^[a-z0-9][a-z0-9._-]{1,63}$"
 VERSION_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$"
 
 
+def normalize_public_reseller_name(value: str) -> str:
+    normalized = " ".join(value.split())
+    if not 2 <= len(normalized) <= 64:
+        raise ValueError("El reseller debe contener entre 2 y 64 caracteres")
+    if any(ord(character) < 32 or ord(character) == 127 for character in normalized):
+        raise ValueError("El reseller contiene caracteres de control")
+    if any(character in "<>&" for character in normalized):
+        raise ValueError("El reseller contiene caracteres no permitidos")
+    return normalized
+
+
 class HealthResponse(BaseModel):
     status: Literal["online"]
     service: str
@@ -26,10 +37,15 @@ class LicenseCreateRequest(BaseModel):
     issued_by_telegram_id: str | None = Field(default=None, max_length=32)
     source_chat_id: str | None = Field(default=None, max_length=32)
     notification_chat_id: str | None = Field(default=None, max_length=32)
-    reseller_name: str = Field(default="Hex Tunnel Bot Gen", min_length=2, max_length=128)
+    reseller_name: str = Field(default="Hex Tunnel Bot Gen", min_length=2, max_length=64)
     expires_in_minutes: int = Field(default=240, ge=1, le=525_600)
     activation_limit: int = Field(default=1, ge=1, le=100)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("reseller_name")
+    @classmethod
+    def validate_reseller_name(cls, value: str) -> str:
+        return normalize_public_reseller_name(value)
 
 
 class LicenseResponse(BaseModel):
