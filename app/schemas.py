@@ -11,11 +11,11 @@ VERSION_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,63}$"
 
 
 def normalize_public_reseller_name(value: str) -> str:
+    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+        raise ValueError("El reseller contiene caracteres de control")
     normalized = " ".join(value.split())
     if not 2 <= len(normalized) <= 64:
         raise ValueError("El reseller debe contener entre 2 y 64 caracteres")
-    if any(ord(character) < 32 or ord(character) == 127 for character in normalized):
-        raise ValueError("El reseller contiene caracteres de control")
     if any(character in "<>&" for character in normalized):
         raise ValueError("El reseller contiene caracteres no permitidos")
     return normalized
