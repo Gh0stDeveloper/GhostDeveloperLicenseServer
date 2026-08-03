@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 PRODUCT_PATTERN = r"^[a-z0-9][a-z0-9._-]{1,63}$"
@@ -23,6 +23,10 @@ class LicenseCreateRequest(BaseModel):
     product: str = Field(default="hextunnel", pattern=PRODUCT_PATTERN)
     owner_telegram_id: str | None = Field(default=None, max_length=32)
     owner_username: str | None = Field(default=None, max_length=128)
+    issued_by_telegram_id: str | None = Field(default=None, max_length=32)
+    source_chat_id: str | None = Field(default=None, max_length=32)
+    notification_chat_id: str | None = Field(default=None, max_length=32)
+    reseller_name: str = Field(default="Hex Tunnel Bot Gen", min_length=2, max_length=128)
     expires_in_minutes: int = Field(default=240, ge=1, le=525_600)
     activation_limit: int = Field(default=1, ge=1, le=100)
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -34,9 +38,14 @@ class LicenseResponse(BaseModel):
     product: str
     owner_telegram_id: str | None
     owner_username: str | None
+    issued_by_telegram_id: str | None
+    source_chat_id: str | None
+    notification_chat_id: str | None
+    reseller_name: str
     status: str
     created_at: datetime
     expires_at: datetime
+    key_redeemed_at: datetime | None
     activation_limit: int
     activation_count: int
     bound_ip: str | None
@@ -104,17 +113,30 @@ class ReleaseResponse(BaseModel):
 class AuthorizeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    key: str = Field(min_length=12, max_length=128)
+    key: str | None = Field(default=None, min_length=12, max_length=128)
+    activation_token: str | None = Field(default=None, min_length=32, max_length=256)
     ip: str = Field(min_length=3, max_length=45)
     nonce: str = Field(pattern=r"^[A-Fa-f0-9]{48}$")
     timestamp: int
     product: str = Field(default="hextunnel", pattern=PRODUCT_PATTERN)
     action: Literal["install", "upgrade"] = "install"
 
+    @model_validator(mode="after")
+    def validate_credential(self) -> "AuthorizeRequest":
+        if self.action == "install" and not self.key:
+            raise ValueError("La instalación requiere una key")
+        if self.action == "upgrade" and not (self.activation_token or self.key):
+            raise ValueError("La actualización requiere el token de activación")
+        return self
+
 
 class AuthorizeResponse(BaseModel):
     status: Literal["valid"]
     expires_at: datetime
+    key_expires_at: datetime
+    activated_at: datetime
+    installation_permanent: Literal[True]
+    reseller_name: str
     download_expires_at: datetime
     nonce: str
     subject: str
@@ -142,3 +164,39 @@ class LeaseResponse(BaseModel):
     product: str
     activation_id: str
     signature: str
+
+
+class InstallerLinkCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expires_in_minutes: int = Field(default=15, ge=1, le=1440)
+    created_by_telegram_id: str | None = Field(default=None, max_length=32)
+    source_chat_id: str | None = Field(default=None, max_length=32)
+
+
+class InstallerLinkResponse(BaseModel):
+    url: str
+    expires_at: datetime
+
+
+class ActivationEventResponse(BaseModel):
+    id: str
+    license_id: str
+    activation_id: str
+    key_prefix: str
+    subject_ip: str
+    activated_at: datetime
+    notification_chat_id: str | None
+    source_chat_id: str | None
+    issued_by_telegram_id: str | None
+    reseller_name: str
+
+
+class ActivationEventListResponse(BaseModel):
+    items: list[ActivationEventResponse]
+    total: int
+
+
+class ActivationEventDeliveredResponse(BaseModel):
+    id: str
+    delivered_at: datetime
