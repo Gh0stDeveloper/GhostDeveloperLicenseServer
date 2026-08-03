@@ -43,6 +43,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.add_middleware(
         TrustedHostMiddleware,
         allowed_hosts=[
+            "ghostdeveloper.duckdns.org",
             "ghostdeveloperkeys.duckdns.org",
             "ghostdeveloperdownloads.duckdns.org",
             "127.0.0.1",
