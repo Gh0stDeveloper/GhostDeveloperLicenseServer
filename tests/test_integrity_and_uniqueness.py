@@ -12,12 +12,14 @@ def license_payload(owner: str) -> dict:
         "product": "hextunnel",
         "owner_telegram_id": owner,
         "owner_username": f"user-{owner}",
+        "issued_by_telegram_id": owner,
+        "reseller_name": f"Reseller {owner}",
         "expires_in_minutes": 240,
         "activation_limit": 1,
     }
 
 
-def test_api_prevents_duplicate_active_license_for_same_owner(test_environment: dict) -> None:
+def test_api_allows_multiple_keys_for_same_issuer(test_environment: dict) -> None:
     env = test_environment
     first = env["client"].post(
         "/api/v1/admin/licenses",
@@ -26,28 +28,21 @@ def test_api_prevents_duplicate_active_license_for_same_owner(test_environment: 
     )
     assert first.status_code == 201, first.text
 
-    duplicate = env["client"].post(
+    second = env["client"].post(
         "/api/v1/admin/licenses",
         headers=admin_headers(env["admin_token"]),
         json=license_payload("7001"),
     )
-    assert duplicate.status_code == 409, duplicate.text
-    assert duplicate.json()["detail"] == "El usuario ya tiene una licencia activa"
+    assert second.status_code == 201, second.text
+    assert second.json()["id"] != first.json()["id"]
+    assert second.json()["key"] != first.json()["key"]
 
-    revoked = env["client"].post(
-        f"/api/v1/admin/licenses/{first.json()['id']}/revoke",
+    listed = env["client"].get(
+        "/api/v1/admin/licenses?issued_by_telegram_id=7001",
         headers=admin_headers(env["admin_token"]),
-        json={"reason": "Permitir una nueva licencia"},
     )
-    assert revoked.status_code == 200, revoked.text
-
-    replacement = env["client"].post(
-        "/api/v1/admin/licenses",
-        headers=admin_headers(env["admin_token"]),
-        json=license_payload("7001"),
-    )
-    assert replacement.status_code == 201, replacement.text
-    assert replacement.json()["id"] != first.json()["id"]
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["total"] == 2
 
 
 def test_authorization_rejects_tampered_active_release(test_environment: dict) -> None:

@@ -24,6 +24,7 @@ class Settings:
     release_root: Path
     download_base_url: str
     public_install_url: str
+    installer_link_base_url: str
     max_clock_skew_seconds: int
     nonce_ttl_seconds: int
     download_ttl_seconds: int
@@ -77,6 +78,10 @@ class Settings:
                 "GHOST_LICENSE_PUBLIC_INSTALL_URL",
                 "https://ghostdeveloper.duckdns.org/install.sh",
             ),
+            installer_link_base_url=os.getenv(
+                "GHOST_LICENSE_INSTALLER_LINK_BASE_URL",
+                "https://ghostdeveloperkeys.duckdns.org/i",
+            ).rstrip("/"),
             max_clock_skew_seconds=int(
                 os.getenv("GHOST_LICENSE_MAX_CLOCK_SKEW_SECONDS", "300")
             ),

@@ -37,7 +37,10 @@ class AuthorizationSigner:
 def canonical_authorization(
     *,
     status: str,
-    expires_at: str,
+    key_expires_at: str,
+    activated_at: str,
+    installation_permanent: bool,
+    reseller_name: str,
     download_expires_at: str,
     nonce: str,
     subject: str,
@@ -48,7 +51,10 @@ def canonical_authorization(
 ) -> str:
     return (
         f"status={status}\n"
-        f"expires_at={expires_at}\n"
+        f"key_expires_at={key_expires_at}\n"
+        f"activated_at={activated_at}\n"
+        f"installation_permanent={'true' if installation_permanent else 'false'}\n"
+        f"reseller_name={reseller_name}\n"
         f"download_expires_at={download_expires_at}\n"
         f"nonce={nonce}\n"
         f"subject={subject}\n"

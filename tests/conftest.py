@@ -59,6 +59,7 @@ def test_environment(tmp_path: Path):
         release_root=release_root,
         download_base_url="https://ghostdeveloperdownloads.duckdns.org",
         public_install_url="https://ghostdeveloper.duckdns.org/install.sh",
+        installer_link_base_url="https://ghostdeveloperkeys.duckdns.org/i",
         max_clock_skew_seconds=300,
         nonce_ttl_seconds=600,
         download_ttl_seconds=300,

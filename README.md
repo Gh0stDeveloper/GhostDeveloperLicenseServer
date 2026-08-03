@@ -1,138 +1,95 @@
 # GhostDeveloperLicenseServer
 
-Servidor privado de licencias, despliegue y distribución segura para **Hex Tunnel**, integrado con **TeleBotGen**, Nginx y GitHub Actions.
+Servidor privado de autorización, releases y distribución segura para Hex Tunnel, integrado con TeleBotGen.
 
 ## Estado
 
-Versión API: `0.2.0`
+Versión API: `0.3.0`
 
 Incluye:
 
 - FastAPI en `127.0.0.1:8080`;
-- SQLite con WAL y respaldos previos al despliegue;
-- keys almacenadas mediante HMAC-SHA256;
-- activaciones ligadas a IP, revocación y reset;
+- SQLite con WAL y migración compatible de columnas nuevas;
+- keys almacenadas únicamente mediante HMAC-SHA256;
+- códigos de activación transferibles y de un solo uso;
+- vencimiento de key aplicado solo antes de la primera activación;
+- instalaciones permanentes hasta revocación administrativa;
+- activaciones vinculadas a IP;
+- reseller incorporado a la autorización firmada;
 - protección contra replay por nonce y timestamp;
 - autorización RSA/SHA-256 para instalación y upgrade;
+- upgrades autenticados mediante `activation.token`, no mediante la key original;
 - descargas privadas temporales y de un solo uso;
-- leases firmados;
-- filtros de licencias por Telegram ID y estado activo;
-- promoción o rollback de releases existentes sin volver a subir el archivo;
+- leases firmados que continúan después de vencer la key utilizada;
+- eventos pendientes para notificaciones de activación en Telegram;
+- enlaces temporales del instalador;
+- filtros por propietario, emisor y grupo de origen;
 - despliegue versionado con health check y rollback automático;
-- bootstrap AMD64/ARM64;
-- pruebas reales de producción mediante GitHub Actions.
+- bootstrap AMD64/ARM64.
+
+## Semántica de la key
+
+`expires_at` representa la fecha límite para utilizar una key que todavía no fue canjeada. Después de una autorización correcta:
+
+- la licencia cambia a `activated`;
+- queda ligada a la IP pública;
+- se registra `key_redeemed_at`;
+- el vencimiento de la key deja de bloquear leases y upgrades;
+- la instalación continúa hasta que un administrador la revoque.
+
+La API nunca conserva la key completa. TeleBotGen la retiene temporalmente en almacenamiento protegido para poder incluirla en el aviso de activación y la elimina después de confirmar la entrega.
+
+## Reseller firmado
+
+Cada licencia puede incluir:
+
+```text
+issued_by_telegram_id
+source_chat_id
+notification_chat_id
+reseller_name
+```
+
+`reseller_name` forma parte del payload RSA de autorización. Hex Tunnel lo guarda en su estado local y lo muestra en el menú sin depender de texto suministrado localmente.
+
+## Eventos de activación
+
+TeleBotGen utiliza:
+
+```text
+GET  /api/v1/admin/activation-events?pending_only=true
+POST /api/v1/admin/activation-events/{event_id}/delivered
+```
+
+El evento contiene la IP pública, fecha de activación, reseller y chat de destino. No contiene la key completa.
+
+## Enlaces temporales
+
+```text
+POST /api/v1/admin/installer-links
+GET  /i/{token}
+```
+
+El enlace temporal redirige al instalador público con `Cache-Control: no-store`. La key continúa siendo obligatoria para autorizar la descarga privada.
 
 ## Arquitectura
 
 ```text
 TeleBotGen
-  └─ localhost + Bearer token
-     └─ /api/v1/admin/
+  └─ localhost + token administrativo
+     ├─ licencias
+     ├─ enlaces temporales
+     └─ eventos de activación
 
 VPS del cliente
   └─ HTTPS
-     ├─ GET  ghostdeveloper.duckdns.org/install.sh
-     ├─ POST ghostdeveloperkeys.duckdns.org/api/v1/install/authorize
-     ├─ POST ghostdeveloperkeys.duckdns.org/api/v1/licenses/lease
-     └─ GET  ghostdeveloperdownloads.duckdns.org/releases/<token>
+     ├─ instalador público
+     ├─ autorización firmada
+     ├─ lease renovable
+     └─ descarga privada de un solo uso
 ```
 
-Los endpoints administrativos permanecen en localhost.
-
-## Operación simplificada
-
-Después del primer despliegue se instala:
-
-```bash
-sudo ghostctl
-```
-
-Comandos principales:
-
-```bash
-sudo ghostctl status
-sudo ghostctl smoke
-sudo ghostctl create-key 240 123456789 usuario
-sudo ghostctl releases hextunnel
-sudo ghostctl activate hextunnel 1.0.0-rc.3
-sudo ghostctl deploy-server
-sudo ghostctl deploy-bot
-sudo ghostctl publish-hextunnel <COMMIT_SHA> [VERSION]
-sudo ghostctl release-all <COMMIT_SHA> [VERSION] [SERVER_REF] [BOT_REF]
-sudo ghostctl rollback-server
-```
-
-`release-all` actualiza el servidor, publica Hex Tunnel, actualiza TeleBotGen y ejecuta las comprobaciones de salud.
-
-## Documentación operativa
-
-- [Actualizaciones independientes de Hex Tunnel, LicenseServer y TeleBotGen](docs/ACTUALIZACIONES.md)
-
-La guía explica los comandos por componente, validaciones posteriores, rollback, diagnóstico y la diferencia entre publicar Hex Tunnel e instalarlo en una VPS cliente.
-
-## Despliegue del servidor
-
-```bash
-sudo bash scripts/install-server.sh
-```
-
-El instalador:
-
-1. crea una release versionada de la aplicación;
-2. construye un entorno virtual aislado;
-3. respalda SQLite;
-4. cambia el enlace `current` de forma atómica;
-5. reinicia la API y espera `/health`;
-6. restaura automáticamente la release anterior si la API falla;
-7. conserva base de datos, secretos, paquetes y configuración.
-
-## Publicar Hex Tunnel
-
-La versión se obtiene automáticamente desde el archivo `VERSION` del commit:
-
-```bash
-sudo ghostctl publish-hextunnel <COMMIT_SHA_COMPLETO>
-```
-
-También puede especificarse explícitamente:
-
-```bash
-sudo ghostctl publish-hextunnel <COMMIT_SHA_COMPLETO> <VERSION>
-```
-
-Antes de registrar el paquete se ejecuta el gate completo de producción, se resuelve el component lock y se valida el TAR.GZ. Registrar nuevamente el mismo archivo y versión es idempotente; una versión existente con otro hash se rechaza.
-
-## GitHub Actions
-
-`Production operations` permite desde la interfaz de Actions:
-
-- desplegar servidor;
-- desplegar bot;
-- publicar Hex Tunnel;
-- actualizar los tres componentes;
-- ejecutar smoke tests;
-- hacer rollback del servidor.
-
-`Live production smoke` valida los dominios públicos. Con secretos SSH configurados también:
-
-- genera una key real de 15 minutos;
-- autoriza la instalación desde la IP del runner;
-- verifica la firma RSA;
-- descarga y valida el paquete;
-- confirma que el enlace sea de un solo uso;
-- renueva el lease;
-- prueba `upgrade` sin aumentar las activaciones;
-- revoca la key de prueba al finalizar.
-
-Secretos requeridos para el ciclo integral:
-
-```text
-GHOST_VPS_HOST
-GHOST_VPS_USER
-GHOST_VPS_SSH_PRIVATE_KEY
-GHOST_VPS_KNOWN_HOSTS
-GHOST_VPS_PORT                # opcional
-```
+Los endpoints administrativos permanecen accesibles únicamente desde localhost mediante la configuración de despliegue.
 
 ## Instalación del cliente
 
@@ -141,7 +98,51 @@ curl -fsSL https://ghostdeveloper.duckdns.org/install.sh -o /tmp/hextunnel-insta
 sudo bash /tmp/hextunnel-install.sh install
 ```
 
-Hex Tunnel funciona en Debian 12 y Ubuntu 22.04/24.04 sobre AMD64 o ARM64. Debe instalarse en una VPS distinta a la VPS del bot y la API.
+La primera instalación solicita una key. Las actualizaciones posteriores usan:
+
+```bash
+sudo hextunnel-upgrade
+```
+
+El actualizador reutiliza el token permanente guardado en `/etc/hextunnel/activation.token`. La key original no se guarda.
+
+## Operación
+
+```bash
+sudo ghostctl status
+sudo ghostctl smoke
+sudo ghostctl create-key 240 123456789 usuario
+sudo ghostctl releases hextunnel
+sudo ghostctl deploy-server
+sudo ghostctl deploy-bot
+sudo ghostctl publish-hextunnel <COMMIT_SHA> [VERSION]
+sudo ghostctl release-all <COMMIT_SHA> [VERSION] [SERVER_REF] [BOT_REF]
+sudo ghostctl rollback-server
+```
+
+## Despliegue
+
+```bash
+sudo bash scripts/install-server.sh
+```
+
+El instalador construye una release versionada, respalda SQLite, cambia `current` atómicamente, reinicia, espera `/health` y restaura la versión anterior si la comprobación falla.
+
+## GitHub Actions
+
+Las pruebas automatizadas validan:
+
+- keys múltiples para un mismo emisor;
+- rechazo de una key ya utilizada;
+- firma RSA del reseller y la activación permanente;
+- evento de activación y confirmación de entrega;
+- enlaces temporales;
+- descarga de un solo uso;
+- upgrade y lease después de vencer artificialmente la key;
+- revocación y reset;
+- integridad de releases.
+
+El smoke integral por SSH sigue siendo opcional hasta disponer de una VPS de pruebas. No bloquea el funcionamiento actual.
 
 ## Desarrollo
 
@@ -150,11 +151,5 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-dev.txt
 make check
-bash -n scripts/ghostctl.sh
-bash -n scripts/live-production-smoke.sh
+bash -n public/install.sh
 ```
-
-## Desarrolladores
-
-- `@Gh0stDeveloper`: integración, licencias e infraestructura.
-- `@Jotchua_DevzZ`: proyecto original y desarrollo base.

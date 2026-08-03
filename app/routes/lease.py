@@ -46,18 +46,17 @@ def renew_lease(
         raise HTTPException(status_code=403, detail="Token de activación inválido")
     license_row = session.get(License, activation.license_id)
     if license_row is None or license_row.status == "revoked":
-        raise HTTPException(status_code=403, detail="Licencia inválida o revocada")
-    current_time = now_epoch()
-    if license_row.expires_at <= current_time:
-        license_row.status = "expired"
-        session.commit()
-        raise HTTPException(status_code=403, detail="La licencia expiró")
+        raise HTTPException(status_code=403, detail="Instalación inválida o revocada")
+    if license_row.status != "activated":
+        raise HTTPException(status_code=403, detail="La key todavía no ha sido activada")
     if activation.subject_ip != subject_ip:
         raise HTTPException(status_code=403, detail="La activación pertenece a otra IP")
     if license_row.product != payload.product:
         raise HTTPException(status_code=403, detail="Producto no autorizado")
 
-    lease_expires_at = min(current_time + settings.lease_ttl_seconds, license_row.expires_at)
+    current_time = now_epoch()
+    key_redemption_deadline = license_row.expires_at
+    lease_expires_at = current_time + settings.lease_ttl_seconds
     activation.last_seen_at = current_time
     activation.lease_expires_at = lease_expires_at
     add_audit(
@@ -65,7 +64,11 @@ def renew_lease(
         event_type="license.lease_renewed",
         actor=subject_ip,
         subject=license_row.id,
-        details={"activation_id": activation.id},
+        details={
+            "activation_id": activation.id,
+            "key_expired": key_redemption_deadline <= current_time,
+            "permanent_activation": True,
+        },
     )
     session.commit()
 
