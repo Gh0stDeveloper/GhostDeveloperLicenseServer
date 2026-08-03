@@ -77,6 +77,17 @@ class Database:
                 "ON licenses (notification_chat_id)"
             )
 
+            # Before 0.3.0, a redeemed key normally remained in status=active
+            # while activation_count/activated_at represented the real install.
+            # Convert every non-revoked redeemed row so the new permanent lease
+            # contract does not interrupt installations that already exist.
+            connection.exec_driver_sql(
+                "UPDATE licenses "
+                "SET status = 'activated', "
+                "    key_redeemed_at = COALESCE(key_redeemed_at, activated_at, created_at) "
+                "WHERE activation_count > 0 AND status != 'revoked'"
+            )
+
     def initialize(self) -> None:
         from app import models  # noqa: F401
 
