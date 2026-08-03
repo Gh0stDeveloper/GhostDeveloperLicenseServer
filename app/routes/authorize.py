@@ -132,6 +132,9 @@ def authorize_installation(
     )
     license_row.status = "activated"
     if created:
+        # ActivationEvent has a foreign key to the newly created activation.
+        # Flush it first so SQLite can validate the reference deterministically.
+        session.flush()
         create_activation_event(session, license_row=license_row, activation=activation)
 
     download_expires_at = current_time + settings.download_ttl_seconds
