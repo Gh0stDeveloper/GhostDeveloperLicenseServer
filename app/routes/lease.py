@@ -55,6 +55,7 @@ def renew_lease(
         raise HTTPException(status_code=403, detail="Producto no autorizado")
 
     current_time = now_epoch()
+    key_redemption_deadline = license_row.expires_at
     lease_expires_at = current_time + settings.lease_ttl_seconds
     activation.last_seen_at = current_time
     activation.lease_expires_at = lease_expires_at
@@ -65,7 +66,7 @@ def renew_lease(
         subject=license_row.id,
         details={
             "activation_id": activation.id,
-            "key_expired": license_row.expires_at <= current_time,
+            "key_expired": key_redemption_deadline <= current_time,
             "permanent_activation": True,
         },
     )
