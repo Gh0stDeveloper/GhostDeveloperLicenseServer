@@ -8,7 +8,7 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from app import __version__
 from app.config import Settings, get_settings
 from app.db import Database
-from app.routes import admin, authorize, downloads, health, lease, well_known
+from app.routes import admin, authorize, downloads, health, install_links, lease, well_known
 from app.security import load_app_secrets
 from app.signing import AuthorizationSigner
 
@@ -52,6 +52,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     application.include_router(health.router)
     application.include_router(well_known.router)
+    application.include_router(install_links.router)
     application.include_router(authorize.router)
     application.include_router(lease.router)
     application.include_router(downloads.router)
