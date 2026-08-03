@@ -7,7 +7,7 @@ AUTH_ENDPOINT="https://ghostdeveloperkeys.duckdns.org/api/v1/install/authorize"
 PUBLIC_KEY_URL="https://ghostdeveloperkeys.duckdns.org/.well-known/hextunnel-license-public.pem"
 PUBLIC_KEY_SHA256="804f9b029d39dd9c9ba4246bcecf3cd9963a5555491f7da8dfc3cc6d24f6ec3e"
 STATE_DIR="/etc/hextunnel"
-KEY_FILE="$STATE_DIR/license.key"
+LEGACY_KEY_FILE="$STATE_DIR/license.key"
 TOKEN_FILE="$STATE_DIR/activation.token"
 STATE_FILE="$STATE_DIR/license-state.env"
 PUBLIC_KEY_FILE="$STATE_DIR/license-public.pem"
@@ -34,28 +34,30 @@ validate_platform(){
   architecture="$(dpkg --print-architecture 2>/dev/null || uname -m)"
   case "$architecture" in
     amd64|x86_64|arm64|aarch64) ;;
-    *) fail "Hex Tunnel requiere una VPS dedicada amd64/x86_64 o arm64/aarch64. Detectado: $architecture" ;;
+    *) fail "Arquitectura no compatible: $architecture" ;;
   esac
   [[ -r /etc/os-release ]] || fail "No se pudo identificar el sistema operativo."
   # shellcheck disable=SC1091
   source /etc/os-release
   case "${ID:-}:${VERSION_ID:-}" in
     debian:12|ubuntu:22.04|ubuntu:24.04) ;;
-    *) fail "Usa Debian 12 o Ubuntu 22.04/24.04 en una VPS dedicada." ;;
+    *) fail "Sistema operativo no compatible." ;;
   esac
 }
 
-read_key(){
+read_install_key(){
   local key="${HEXTUNNEL_LICENSE_KEY:-}"
-  if [[ -z "$key" && -r "$KEY_FILE" ]]; then
-    key="$(tr -d '\r\n' < "$KEY_FILE")"
-  fi
   if [[ -z "$key" && -t 0 ]]; then
     read -r -s -p "KEY: " key
     printf '\n'
   fi
   [[ -n "$key" ]] || fail "No se proporcionó una key."
   printf '%s' "$key"
+}
+
+read_activation_token(){
+  [[ -s "$TOKEN_FILE" ]] || fail "No existe una activación instalada para actualizar."
+  tr -d '\r\n' < "$TOKEN_FILE"
 }
 
 future_time(){
@@ -65,7 +67,7 @@ future_time(){
 }
 
 canonical(){
-  printf 'status=%s\nexpires_at=%s\ndownload_expires_at=%s\nnonce=%s\nsubject=%s\nversion=%s\ndownload_url=%s\npackage_sha256=%s\nentrypoint=%s\n' "$@"
+  printf 'status=%s\nkey_expires_at=%s\nactivated_at=%s\ninstallation_permanent=%s\nreseller_name=%s\ndownload_expires_at=%s\nnonce=%s\nsubject=%s\nversion=%s\ndownload_url=%s\npackage_sha256=%s\nentrypoint=%s\n' "$@"
 }
 
 validate_archive(){
@@ -81,14 +83,17 @@ validate_archive(){
 }
 
 persist_authorization_state(){
-  local key="$1" activation_token="$2" expires_at="$3" lease_expires_at="$4"
-  local subject="$5" version="$6" action="$7" public_key="$8" work
+  local activation_token="$1" key_expires_at="$2" activated_at="$3"
+  local lease_expires_at="$4" subject="$5" version="$6" action="$7"
+  local reseller_name="$8" public_key="$9" work
   install -d -m 700 "$STATE_DIR"
   work="$(mktemp -d "$STATE_DIR/.authorization.XXXXXX")"
-  printf '%s\n' "$key" > "$work/license.key"
   printf '%s\n' "$activation_token" > "$work/activation.token"
   cat > "$work/license-state.env" <<EOF
-HEXTUNNEL_LICENSE_EXPIRES_AT=$(printf '%q' "$expires_at")
+HEXTUNNEL_KEY_EXPIRES_AT=$(printf '%q' "$key_expires_at")
+HEXTUNNEL_ACTIVATED_AT=$(printf '%q' "$activated_at")
+HEXTUNNEL_INSTALLATION_PERMANENT=1
+HEXTUNNEL_RESELLER=$(printf '%q' "$reseller_name")
 HEXTUNNEL_LEASE_EXPIRES_AT=$(printf '%q' "$lease_expires_at")
 HEXTUNNEL_LICENSE_SUBJECT=$(printf '%q' "$subject")
 HEXTUNNEL_INSTALLED_VERSION=$(printf '%q' "$version")
@@ -96,19 +101,20 @@ HEXTUNNEL_LAST_OPERATION=$(printf '%q' "$action")
 HEXTUNNEL_UPDATED_AT=$(printf '%q' "$(date -u +%Y-%m-%dT%H:%M:%SZ)")
 EOF
   install -m 600 "$public_key" "$work/license-public.pem"
-  chmod 600 "$work/license.key" "$work/activation.token" "$work/license-state.env"
-  mv -f "$work/license.key" "$KEY_FILE"
+  chmod 600 "$work/activation.token" "$work/license-state.env"
   mv -f "$work/activation.token" "$TOKEN_FILE"
   mv -f "$work/license-state.env" "$STATE_FILE"
   mv -f "$work/license-public.pem" "$PUBLIC_KEY_FILE"
+  rm -f "$LEGACY_KEY_FILE"
   rmdir "$work"
 }
 
 main(){
-  local action="${1:-install}" key ip nonce timestamp response tmp result
+  local action="${1:-install}" key='' activation_credential='' ip nonce timestamp response tmp result
   local request_file auth_body http_status api_detail
-  local status expires_at download_expires_at response_nonce subject version
-  local download_url package_sha256 entrypoint signature activation_token lease_expires_at
+  local status key_expires_at activated_at installation_permanent reseller_name
+  local download_expires_at response_nonce subject version download_url package_sha256
+  local entrypoint signature activation_token lease_expires_at
   local public_key payload signature_file archive extract_root entrypoint_file package_root
   local -a matches=()
 
@@ -125,7 +131,7 @@ main(){
   install_dependencies
   install -d -m 755 "$(dirname "$LOCK_FILE")"
   exec 9>"$LOCK_FILE"
-  flock -n 9 || fail "Ya existe otra instalación o actualización de Hex Tunnel en curso."
+  flock -n 9 || fail "Ya existe otra instalación o actualización en curso."
   validate_platform
 
   tmp="$(mktemp -d /tmp/hextunnel-public.XXXXXX)"
@@ -140,24 +146,34 @@ main(){
   extract_root="$tmp/extracted"
   mkdir -p "$extract_root"
 
-  key="$(read_key)"
+  if [[ "$action" == install ]]; then
+    key="$(read_install_key)"
+  else
+    activation_credential="$(read_activation_token)"
+  fi
   unset HEXTUNNEL_LICENSE_KEY
   ip="$(curl -4fsS --retry 2 --connect-timeout 8 --max-time 15 https://api.ipify.org)" \
     || fail "No se pudo detectar la IP pública."
   nonce="$(openssl rand -hex 24)"
   timestamp="$(date -u +%s)"
-  jq -n \
-    --arg key "$key" \
-    --arg ip "$ip" \
-    --arg nonce "$nonce" \
-    --arg action "$action" \
-    --argjson timestamp "$timestamp" \
-    '{key:$key,ip:$ip,nonce:$nonce,timestamp:$timestamp,product:"hextunnel",action:$action}' \
-    > "$request_file"
+  if [[ "$action" == install ]]; then
+    jq -n \
+      --arg key "$key" --arg ip "$ip" --arg nonce "$nonce" --arg action "$action" \
+      --argjson timestamp "$timestamp" \
+      '{key:$key,ip:$ip,nonce:$nonce,timestamp:$timestamp,product:"hextunnel",action:$action}' \
+      > "$request_file"
+  else
+    jq -n \
+      --arg activation_token "$activation_credential" --arg ip "$ip" \
+      --arg nonce "$nonce" --arg action "$action" --argjson timestamp "$timestamp" \
+      '{activation_token:$activation_token,ip:$ip,nonce:$nonce,timestamp:$timestamp,product:"hextunnel",action:$action}' \
+      > "$request_file"
+  fi
+  unset key activation_credential
   : > "$auth_body"
   chmod 600 "$request_file" "$auth_body"
 
-  printf 'Verificando licencia para %s...\n' "$action"
+  printf 'Validando autorización para %s...\n' "$action"
   if ! http_status="$(curl -sS --retry 2 --connect-timeout 8 --max-time 25 \
     -H 'Accept: application/json' \
     -H 'Content-Type: application/json' \
@@ -166,20 +182,22 @@ main(){
     -o "$auth_body" \
     -w '%{http_code}' \
     "$AUTH_ENDPOINT")"; then
-    fail "No se pudo contactar la API de licencias."
+    fail "No se pudo validar la autorización."
   fi
   response="$(cat "$auth_body")"
 
   if [[ ! "$http_status" =~ ^2[0-9]{2}$ ]]; then
     api_detail="$(jq -r '.detail // empty' <<< "$response" 2>/dev/null || true)"
-    [[ -n "$api_detail" ]] || api_detail="respuesta HTTP sin detalle"
-    fail "La API rechazó la solicitud: ${api_detail} (HTTP ${http_status})."
+    [[ -n "$api_detail" ]] || api_detail="solicitud rechazada"
+    fail "No fue posible continuar: ${api_detail}."
   fi
 
-  jq empty <<< "$response" >/dev/null 2>&1 || fail "La API devolvió JSON inválido."
+  jq empty <<< "$response" >/dev/null 2>&1 || fail "Se recibió una respuesta inválida."
   status="$(jq -r '.status // empty' <<< "$response")"
-  [[ "$status" == valid ]] || fail "La licencia no es válida."
-  expires_at="$(jq -r '.expires_at // empty' <<< "$response")"
+  key_expires_at="$(jq -r '.key_expires_at // .expires_at // empty' <<< "$response")"
+  activated_at="$(jq -r '.activated_at // empty' <<< "$response")"
+  installation_permanent="$(jq -r '.installation_permanent // false' <<< "$response")"
+  reseller_name="$(jq -r '.reseller_name // "Hex Tunnel Bot Gen"' <<< "$response")"
   download_expires_at="$(jq -r '.download_expires_at // empty' <<< "$response")"
   response_nonce="$(jq -r '.nonce // empty' <<< "$response")"
   subject="$(jq -r '.subject // empty' <<< "$response")"
@@ -191,26 +209,29 @@ main(){
   activation_token="$(jq -r '.activation_token // empty' <<< "$response")"
   lease_expires_at="$(jq -r '.lease_expires_at // empty' <<< "$response")"
 
+  [[ "$status" == valid ]] || fail "La autorización no es válida."
+  [[ "$installation_permanent" == true ]] || fail "La autorización no confirma una instalación permanente."
   [[ "$response_nonce" == "$nonce" ]] || fail "Nonce de autorización incorrecto."
-  [[ "$subject" == "$ip" ]] || fail "La licencia fue autorizada para otra IP."
-  [[ -n "$version" ]] || fail "La autorización no incluye versión."
+  [[ "$subject" == "$ip" ]] || fail "La autorización corresponde a otra IP."
+  [[ -n "$version" && -n "$activated_at" && -n "$key_expires_at" ]] || fail "Autorización incompleta."
+  [[ -n "$reseller_name" && ${#reseller_name} -le 128 ]] || fail "Identidad de reseller inválida."
   [[ "$download_url" == https://* ]] || fail "La descarga privada no usa HTTPS."
   [[ "$package_sha256" =~ ^[0-9a-fA-F]{64}$ ]] || fail "SHA-256 inválido."
   [[ "$entrypoint" =~ ^[A-Za-z0-9._/-]+$ && "$entrypoint" != /* && "$entrypoint" != *".."* ]] \
     || fail "Entrypoint inseguro."
   [[ -n "$signature" && -n "$activation_token" ]] || fail "Autorización incompleta."
-  future_time "$expires_at" "La licencia"
   future_time "$download_expires_at" "El enlace"
-  future_time "$lease_expires_at" "El lease"
+  future_time "$lease_expires_at" "La autorización renovable"
 
   curl -fsSL --retry 2 --connect-timeout 8 --max-time 20 \
-    "$PUBLIC_KEY_URL" -o "$public_key" || fail "No se pudo descargar la clave pública."
+    "$PUBLIC_KEY_URL" -o "$public_key" || fail "No se pudo obtener la clave pública."
   printf '%s  %s\n' "$PUBLIC_KEY_SHA256" "$public_key" | sha256sum -c - >/dev/null \
     || fail "La clave pública no coincide con el hash fijado."
   openssl pkey -pubin -in "$public_key" -noout >/dev/null 2>&1 || fail "Clave pública inválida."
   canonical \
-    "$status" "$expires_at" "$download_expires_at" "$response_nonce" "$subject" \
-    "$version" "$download_url" "${package_sha256,,}" "$entrypoint" > "$payload"
+    "$status" "$key_expires_at" "$activated_at" "$installation_permanent" "$reseller_name" \
+    "$download_expires_at" "$response_nonce" "$subject" "$version" "$download_url" \
+    "${package_sha256,,}" "$entrypoint" > "$payload"
   printf '%s' "$signature" | base64 -d > "$signature_file" 2>/dev/null \
     || fail "Firma Base64 inválida."
   openssl dgst -sha256 -verify "$public_key" -signature "$signature_file" "$payload" >/dev/null \
@@ -218,7 +239,7 @@ main(){
 
   printf 'Descargando Hex Tunnel %s...\n' "$version"
   curl -fsSL --retry 3 --connect-timeout 10 --max-time 300 \
-    "$download_url" -o "$archive" || fail "No se pudo descargar el paquete privado autorizado."
+    "$download_url" -o "$archive" || fail "No se pudo descargar el paquete autorizado."
   printf '%s  %s\n' "${package_sha256,,}" "$archive" | sha256sum -c - >/dev/null \
     || fail "El paquete no coincide con el SHA-256 autorizado."
   validate_archive "$archive"
@@ -236,12 +257,15 @@ main(){
   chmod 700 "$entrypoint_file"
 
   persist_authorization_state \
-    "$key" "$activation_token" "$expires_at" "$lease_expires_at" \
-    "$subject" "$version" "$action" "$public_key"
-  unset key activation_token signature response
+    "$activation_token" "$key_expires_at" "$activated_at" "$lease_expires_at" \
+    "$subject" "$version" "$action" "$reseller_name" "$public_key"
+  unset activation_token signature response
 
   export HEXTUNNEL_LICENSE_PREVALIDATED=1
-  export HEXTUNNEL_LICENSE_EXPIRES_AT="$expires_at"
+  export HEXTUNNEL_KEY_EXPIRES_AT="$key_expires_at"
+  export HEXTUNNEL_ACTIVATED_AT="$activated_at"
+  export HEXTUNNEL_INSTALLATION_PERMANENT=1
+  export HEXTUNNEL_RESELLER="$reseller_name"
   export HEXTUNNEL_LICENSE_SUBJECT="$subject"
   export HEXTUNNEL_PRIVATE_PACKAGE_ROOT="$package_root"
   export HEXTUNNEL_TARGET_VERSION="$version"
