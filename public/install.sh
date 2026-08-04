@@ -111,7 +111,7 @@ EOF
 
 main(){
   local action="${1:-install}" request_action='' key='' activation_credential=''
-  local ip nonce timestamp response tmp result
+  local ip nonce timestamp response tmp result authorization_persisted=0
   local request_file auth_body http_status api_detail
   local status key_expires_at activated_at installation_permanent reseller_name
   local download_expires_at response_nonce subject version download_url package_sha256
@@ -263,10 +263,15 @@ main(){
   fi
   chmod 700 "$entrypoint_file"
 
-  persist_authorization_state \
-    "$activation_token" "$key_expires_at" "$activated_at" "$lease_expires_at" \
-    "$subject" "$version" "$action" "$reseller_name" "$public_key"
-  unset activation_token signature response
+  # La primera activación debe guardar el token antes de instalar para poder
+  # reanudarse si falla. En upgrades o reanudaciones ya existe un token local;
+  # el estado de versión se confirma únicamente después de un entrypoint exitoso.
+  if [[ "$request_action" == install ]]; then
+    persist_authorization_state \
+      "$activation_token" "$key_expires_at" "$activated_at" "$lease_expires_at" \
+      "$subject" "$version" "$action" "$reseller_name" "$public_key"
+    authorization_persisted=1
+  fi
 
   export HEXTUNNEL_LICENSE_PREVALIDATED=1
   export HEXTUNNEL_KEY_EXPIRES_AT="$key_expires_at"
@@ -283,6 +288,16 @@ main(){
   bash "$entrypoint_file" "${@:2}"
   result=$?
   set -e
+
+  if [[ "$result" -eq 0 && "$authorization_persisted" -eq 0 ]]; then
+    persist_authorization_state \
+      "$activation_token" "$key_expires_at" "$activated_at" "$lease_expires_at" \
+      "$subject" "$version" "$action" "$reseller_name" "$public_key"
+  elif [[ "$result" -ne 0 && "$authorization_persisted" -eq 0 ]]; then
+    printf 'La actualización falló; se conservó el estado local de la versión anterior.\n' >&2
+  fi
+
+  unset activation_token signature response
   rm -rf "$tmp"
   tmp=""
   trap - EXIT
