@@ -77,6 +77,19 @@ rsync -a --delete \
   --exclude='*.sha256' \
   "$SOURCE_DIR/" "$STAGE_DIR/"
 
+# GitHub's Contents API cannot reliably set an executable bit when files are
+# created or replaced. Normalize the commercial staging tree exactly as the
+# reproducible package builder does, so the package tested by the gate and the
+# package registered by the LicenseServer have compatible modes.
+find "$STAGE_DIR" -type d -exec chmod 0755 {} +
+find "$STAGE_DIR" -type f -exec chmod 0644 {} +
+chmod 0755 \
+  "$STAGE_DIR/install.sh" \
+  "$STAGE_DIR/beta-install.sh" \
+  "$STAGE_DIR"/bin/* \
+  "$STAGE_DIR"/scripts/*.sh \
+  "$STAGE_DIR/legacy/install-all.sh"
+
 cat > "$STAGE_DIR/RELEASE-SOURCE.env" <<EOF
 HEXTUNNEL_RELEASE_VERSION=$(printf '%q' "$VERSION")
 HEXTUNNEL_SOURCE_COMMIT=$(printf '%q' "$COMMIT_SHA")
@@ -102,6 +115,16 @@ for required in \
   [[ -s "$STAGE_DIR/$required" ]] || { echo "ERROR: falta $required" >&2; exit 1; }
 done
 
+for executable in \
+  install.sh \
+  bin/hextunnel-private-install \
+  bin/hextunnel-private-upgrade \
+  bin/hextunnel-license \
+  bin/hextunnel-install-license-runtime; do
+  [[ -x "$STAGE_DIR/$executable" ]] \
+    || { echo "ERROR: $executable no quedó ejecutable en staging." >&2; exit 1; }
+done
+
 rm -f "$ARCHIVE" "$RELEASE_JSON"
 tar \
   --sort=name \
@@ -117,6 +140,18 @@ chmod 0600 "$ARCHIVE"
 tar -tzf "$ARCHIVE" | sed 's#^\./##' | grep -Fxq 'bin/hextunnel-private-install'
 tar -tzf "$ARCHIVE" | sed 's#^\./##' | grep -Fxq 'bin/hextunnel-private-upgrade'
 tar -tzf "$ARCHIVE" | sed 's#^\./##' | grep -Fxq 'bin/hextunnel-license'
+
+for executable in \
+  ./install.sh \
+  ./bin/hextunnel-private-install \
+  ./bin/hextunnel-private-upgrade \
+  ./bin/hextunnel-license \
+  ./bin/hextunnel-install-license-runtime; do
+  archive_mode="$(tar -tvzf "$ARCHIVE" | awk -v path="$executable" '$NF == path {print $1; exit}')"
+  [[ "$archive_mode" == -rwx* ]] \
+    || { echo "ERROR: $executable perdió el permiso ejecutable dentro del TAR.GZ ($archive_mode)." >&2; exit 1; }
+done
+
 if tar -tzf "$ARCHIVE" | grep -Eq '(^/|(^|/)\.\.(/|$))'; then
   echo 'ERROR: el TAR.GZ contiene rutas inseguras.' >&2
   exit 1
