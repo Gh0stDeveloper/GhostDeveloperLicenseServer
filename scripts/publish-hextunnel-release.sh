@@ -137,9 +137,17 @@ tar \
   .
 chmod 0600 "$ARCHIVE"
 
-tar -tzf "$ARCHIVE" | sed 's#^\./##' | grep -Fxq 'bin/hextunnel-private-install'
-tar -tzf "$ARCHIVE" | sed 's#^\./##' | grep -Fxq 'bin/hextunnel-private-upgrade'
-tar -tzf "$ARCHIVE" | sed 's#^\./##' | grep -Fxq 'bin/hextunnel-license'
+# Materializa los listados una sola vez. Evita pipelines con grep -q o awk
+# con salida temprana bajo pipefail, que cerraban la tubería y hacían terminar
+# tar con SIGPIPE (código 141) después de construir un paquete válido.
+ARCHIVE_LIST="$WORK_ROOT/archive-list.txt"
+ARCHIVE_VERBOSE_LIST="$WORK_ROOT/archive-verbose-list.txt"
+tar -tzf "$ARCHIVE" | sed 's#^\./##' > "$ARCHIVE_LIST"
+tar -tvzf "$ARCHIVE" > "$ARCHIVE_VERBOSE_LIST"
+
+grep -Fx 'bin/hextunnel-private-install' "$ARCHIVE_LIST" >/dev/null
+grep -Fx 'bin/hextunnel-private-upgrade' "$ARCHIVE_LIST" >/dev/null
+grep -Fx 'bin/hextunnel-license' "$ARCHIVE_LIST" >/dev/null
 
 for executable in \
   ./install.sh \
@@ -147,12 +155,12 @@ for executable in \
   ./bin/hextunnel-private-upgrade \
   ./bin/hextunnel-license \
   ./bin/hextunnel-install-license-runtime; do
-  archive_mode="$(tar -tvzf "$ARCHIVE" | awk -v path="$executable" '$NF == path {print $1; exit}')"
+  archive_mode="$(awk -v path="$executable" '$NF == path {mode=$1} END {print mode}' "$ARCHIVE_VERBOSE_LIST")"
   [[ "$archive_mode" == -rwx* ]] \
     || { echo "ERROR: $executable perdió el permiso ejecutable dentro del TAR.GZ ($archive_mode)." >&2; exit 1; }
 done
 
-if tar -tzf "$ARCHIVE" | grep -Eq '(^/|(^|/)\.\.(/|$))'; then
+if grep -Eq '(^/|(^|/)\.\.(/|$))' "$ARCHIVE_LIST"; then
   echo 'ERROR: el TAR.GZ contiene rutas inseguras.' >&2
   exit 1
 fi
