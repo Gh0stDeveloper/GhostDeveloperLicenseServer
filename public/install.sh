@@ -45,14 +45,62 @@ validate_platform(){
   esac
 }
 
+normalize_install_key(){
+  local key="$1" hyphen
+  key="${key//$'\r'/}"
+  key="${key//$'\n'/}"
+  key="${key//$'\t'/}"
+  key="${key// /}"
+  key="${key//$'\u00a0'/}"
+  key="${key//$'\u200b'/}"
+  key="${key//$'\u200c'/}"
+  key="${key//$'\u200d'/}"
+  key="${key//$'\ufeff'/}"
+  for hyphen in $'\u2010' $'\u2011' $'\u2012' $'\u2013' $'\u2014' $'\u2212'; do
+    key="${key//$hyphen/-}"
+  done
+  printf '%s' "${key^^}"
+}
+
 read_install_key(){
-  local key="${HEXTUNNEL_LICENSE_KEY:-}"
-  if [[ -z "$key" && -t 0 ]]; then
-    read -r -s -p "KEY: " key
-    printf '\n'
-  fi
-  [[ -n "$key" ]] || fail "No se proporcionó una key."
-  printf '%s' "$key"
+  local key="${HEXTUNNEL_LICENSE_KEY:-}" confirmation=''
+  while true; do
+    if [[ -z "$key" ]]; then
+      [[ -r /dev/tty && -w /dev/tty ]] \
+        || fail "No existe una terminal interactiva para pegar la key. Ejecuta el archivo descargado directamente o define HEXTUNNEL_LICENSE_KEY."
+      printf '\nPega la KEY de Hex Tunnel y presiona Enter:\n> ' > /dev/tty
+      IFS= read -r key < /dev/tty \
+        || fail "No se pudo leer la key desde la terminal."
+    fi
+
+    key="$(normalize_install_key "$key")"
+    if [[ ! "$key" =~ ^HT-[A-Z0-9]{4}(-[A-Z0-9]{4}){5}$ ]]; then
+      if [[ -n "${HEXTUNNEL_LICENSE_KEY:-}" ]]; then
+        fail "HEXTUNNEL_LICENSE_KEY no tiene el formato HT-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX."
+      fi
+      printf 'Formato inválido. Usa HT-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX. Intenta nuevamente.\n' > /dev/tty
+      key=''
+      continue
+    fi
+
+    if [[ -n "${HEXTUNNEL_LICENSE_KEY:-}" ]]; then
+      printf '%s' "$key"
+      return 0
+    fi
+
+    printf '\nKEY detectada: %s\n' "$key" > /dev/tty
+    printf '¿La KEY está correcta? [S/n]: ' > /dev/tty
+    IFS= read -r confirmation < /dev/tty || confirmation=''
+    case "${confirmation,,}" in
+      n|no)
+        key=''
+        ;;
+      *)
+        printf '%s' "$key"
+        return 0
+        ;;
+    esac
+  done
 }
 
 read_activation_token(){
